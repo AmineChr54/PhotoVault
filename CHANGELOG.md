@@ -16,6 +16,7 @@ All notable changes. Format: Added / Changed / Fixed. Versions follow semver; ta
 - Added docs/USER_GUIDE.md (linked from the README).
 
 ### Fixed
+- Found by the real-display UI smoke (#12): the Tags page's "To review" column header was cut off ("To rev") and the "Add a tag" box was too narrow to show its hint; the "Zoom 150%" status message overlapped the status label after a zoom change.
 - "Enable AI features" did nothing when clicked (#1); it now starts the AI setup, and a start failure is shown instead of leaving the button stuck.
 - AI Index page crashed on open when the AI environment was already set up (#35).
 - CI: UI smoke no longer hangs headless (Search page shows an inline "AI not set up" message instead of a modal dialog).
