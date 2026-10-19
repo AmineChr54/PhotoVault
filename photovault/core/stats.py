@@ -61,6 +61,22 @@ def days_since(ts):
     return None if ts is None else int((time.time() - ts) // 86400)
 
 
+def reminder_text(settings, last_backup, now=None):
+    """Text for the "backup overdue" startup notification, or None when no reminder is due.
+
+    Silent when the user switched reminders off, has not finished setup, or has no backup folder
+    chosen (a fresh install should not nag about a backup it cannot make yet).
+    """
+    if not settings.backup_notify or not settings.setup_complete or not settings.backup_target:
+        return None
+    if last_backup is None:
+        return "No backup has been made yet."
+    days = int(((now if now is not None else time.time()) - last_backup) // 86400)
+    if days < settings.backup_reminder_days:
+        return None
+    return f"Last backup was {days} day{'s' if days != 1 else ''} ago."
+
+
 def export_html(s: dict, path: str) -> None:
     def table(title, headers, rows):
         h = "".join(f"<th>{html.escape(x)}</th>" for x in headers)

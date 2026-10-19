@@ -114,6 +114,7 @@ class Settings:
     setup_complete: bool = True
     similar_threshold: int = 6
     backup_reminder_days: int = 30
+    backup_notify: bool = True  # Windows notification at startup when a backup is overdue
     theme: str = "dark"
     ui_zoom: float = 1.0
     folder_rules: list = field(default_factory=lambda: [list(r) for r in DEFAULT_RULES])

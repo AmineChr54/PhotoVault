@@ -96,12 +96,18 @@ Everything the app changed. Select a move (organize, quarantine) and click **Und
 
 ## Settings
 - *Folders*: *Library folders (scanned)* (**Add...**, **Remove**), *Organized photos go to:*, *Quarantine folder:*.
-- *Behaviour*: *Similar-photo sensitivity (1 strict - 7 loose)*, *Remind me to back up after:* N days, *Theme:*.
+- *Behaviour*: *Similar-photo sensitivity (1 strict - 7 loose)*, *Remind me to back up after:* N days, a checkbox for the startup backup notification (below), *Theme:*.
 - *Folder rules*: each top-level folder name (wildcards `*`) maps to a category (raw, curated, screenshots,
   projects, documents, other, skip, chat:App, gaming:Name); first match wins, unmatched folders count as raw.
   **Add rule**, **Remove selected rule**, **Move up**, **Move down**, **Reset to defaults**. The built-in rules were
   written for the author's folder names; edit them for your library.
 - **Save settings** stores everything. Existing settings files are never overwritten at startup.
+
+## Backup reminder
+When Photo Vault starts and the last backup is older than *Remind me to back up after* (or you chose a backup folder
+but never backed up), Windows shows a notification: "Last backup was N days ago". Click it to open **Backup**. It
+shows once per start. Right-click the Photo Vault tray icon while it is visible for **Do not remind me again**, or
+switch it on/off any time under Settings > Behaviour. The Dashboard card still shows the status either way.
 
 ## Where things live
 - Settings, index and journal: `%LOCALAPPDATA%\PhotoVault` (`settings.json`, `library.db`, `thumbs\`). Set

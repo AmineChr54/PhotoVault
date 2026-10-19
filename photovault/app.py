@@ -2,7 +2,7 @@
 import os
 import sys
 
-from PySide6.QtCore import QSettings, QSize, Qt
+from PySide6.QtCore import QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow, QProgressBar,
                                QPushButton, QStackedWidget, QStatusBar, QVBoxLayout, QWidget)
@@ -17,6 +17,7 @@ from .ui.pages_ai import AiIndexPage, PeoplePage, SearchPage, TagsPage
 from .ui.pages_b import BackupPage, ImportPage, OrganizePage
 from .ui.pages_c import BrowsePage, HealthPage, LogPage, QuarantinePage, SettingsPage
 from .ui.pages_help import AboutDialog, HelpPage
+from .ui.reminder import BackupReminder
 
 PAGES = [
     ("Dashboard", DashboardPage),
@@ -136,6 +137,8 @@ class MainWindow(QMainWindow):
                            lambda r: label.setText(f"Library up to date: {r['total']:,} files "
                                                    f"({r['new_or_changed']:,} new/changed, {r['removed']:,} gone)"),
                            parent=self)
+        self.reminder = BackupReminder(self)
+        QTimer.singleShot(2000, self, self.reminder.check)
 
     def _restore_geometry(self):
         """Reopen at the last size/position, else fit ~90% of the screen (never larger than it)."""
@@ -191,6 +194,17 @@ class MainWindow(QMainWindow):
         """Jump to the Help page (F1, first-run notice)."""
         for i, (_, cls) in enumerate(PAGES):
             if cls is HelpPage:
+                self.nav.setCurrentRow(i)
+                return
+
+    def open_backup(self):
+        """Jump to the Backup page (backup reminder notification)."""
+        for i, (_, cls) in enumerate(PAGES):
+            if cls is BackupPage:
+                self.show()
+                if self.isMinimized():
+                    self.showNormal()
+                self.activateWindow()
                 self.nav.setCurrentRow(i)
                 return
 

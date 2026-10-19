@@ -371,3 +371,46 @@ def test_default_layout_scan_skips_quarantine(tmp_path):
     s = config.Settings(library_roots=[str(pics)], organized_root=str(pics / "Photos"),
                         quarantine_dir=str(pics / "_Duplicates_To_Review"))
     assert [os.path.basename(p) for p, _, _ in scanner.walk_roots(s)] == ["a.jpg"]
+
+
+# ---------- backup reminder ----------
+def test_reminder_text_due_and_not_due():
+    import time
+    now = time.time()
+    day = 86400
+    s = config.Settings(backup_target=r"F:\Backup", backup_reminder_days=30)
+    assert stats.reminder_text(s, now - 29 * day, now) is None
+    assert stats.reminder_text(s, now - 30 * day, now) == "Last backup was 30 days ago."
+    assert stats.reminder_text(s, now - 31 * day - 5, now) == "Last backup was 31 days ago."
+    s.backup_reminder_days = 1
+    assert stats.reminder_text(s, now - 1 * day, now) == "Last backup was 1 day ago."
+
+
+def test_reminder_text_never_backed_up_needs_a_target():
+    s = config.Settings(backup_target=r"F:\Backup")
+    assert stats.reminder_text(s, None) == "No backup has been made yet."
+    s.backup_target = ""  # nothing to back up to yet: do not nag
+    assert stats.reminder_text(s, None) is None
+
+
+def test_reminder_text_respects_opt_out_and_first_run():
+    import time
+    old = time.time() - 400 * 86400
+    s = config.Settings(backup_target=r"F:\Backup", backup_notify=False)
+    assert stats.reminder_text(s, old) is None
+    s.backup_notify = True
+    assert stats.reminder_text(s, old) is not None
+    s.setup_complete = False
+    assert stats.reminder_text(s, old) is None
+
+
+def test_backup_notify_defaults_on_for_existing_settings(fresh_home):
+    import json
+    fresh_home.mkdir(parents=True)
+    (fresh_home / "settings.json").write_text(json.dumps({"backup_target": r"F:\B", "backup_reminder_days": 14}),
+                                              encoding="utf-8")
+    s = config.Settings.load()
+    assert s.backup_notify is True and s.backup_reminder_days == 14
+    s.backup_notify = False
+    s.save()
+    assert config.Settings.load().backup_notify is False

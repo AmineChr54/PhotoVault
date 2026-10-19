@@ -4,6 +4,7 @@ All notable changes. Format: Added / Changed / Fixed. Versions follow semver; ta
 
 ## Unreleased
 ### Added
+- Backup reminder notification (#2): when the app starts and the last backup is older than "Remind me to back up after" (or none was ever made, with a backup folder set), a Windows notification says "Last backup was N days ago"; clicking it opens the Backup page. The tray menu has "Do not remind me again"; Settings has a matching checkbox to turn it back on.
 - In-app Help page (#28): the user guide and a What's new section render inside the app (sidebar > Help, or F1 anywhere). New About dialog (sidebar footer or Help page) with version, GitHub link, privacy note and AI model credits (including InsightFace's non-commercial licence). The first-run notice links to Help. The guide and changelog are bundled into the exe.
 
 ### Changed
