@@ -230,6 +230,7 @@ class GroupView(QWidget):
         self.folder.currentIndexChanged.connect(self.apply_filter)
         self.summary = QLabel("Click the button to search.")
         self.summary.setObjectName("pageSub")
+        self.summary.setWordWrap(True)
         self.all_btn = button("Quarantine extras in ALL shown groups…", danger=True)
         self.all_btn.clicked.connect(self.quarantine_all)
         self.all_btn.setEnabled(False)
@@ -258,6 +259,7 @@ class GroupView(QWidget):
         hint = QLabel("Exact copies are byte-for-byte identical - removing extras loses nothing." if not similar else
                       "Similar = same picture in another size/quality (e.g. WhatsApp copy). Check before removing.")
         hint.setObjectName("pageSub")
+        hint.setWordWrap(True)
         rl.addLayout(hrow(self.q_btn, self.ignore_btn, hint))
         split.addWidget(right)
         split.setSizes([330, 900])

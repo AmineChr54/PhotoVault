@@ -7,6 +7,7 @@ All notable changes. Format: Added / Changed / Fixed. Versions follow semver; ta
 - In-app Help page (#28): the user guide and a What's new section render inside the app (sidebar > Help, or F1 anywhere). New About dialog (sidebar footer or Help page) with version, GitHub link, privacy note and AI model credits (including InsightFace's non-commercial licence). The first-run notice links to Help. The guide and changelog are bundled into the exe.
 
 ### Changed
+- The window now opens sized to fit your screen (it was larger than a 1440px-wide screen) and remembers its size and position (#14). The Duplicates page no longer forces a minimum window width wider than the screen.
 - Open-source release: MIT licence, no hard-coded personal paths (dialogs start in your Pictures folder, restores go to `Pictures\_Restored`, no extra AI index roots), README screenshots removed.
 - New app icon: an indigo camera aperture on a near-black tile (#26). README refreshed with screenshots, shortcuts and credits.
 - New Umbra-style look (#27): black/indigo dark theme and matching light theme, hairline borders, Segoe UI Variable, outline line icons and an accent-bar active item in the sidebar, brand block with the app icon and version. Status colours and charts follow the theme.
