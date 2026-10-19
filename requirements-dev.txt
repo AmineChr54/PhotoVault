@@ -1,0 +1,5 @@
+-r requirements.txt
+-r requirements-ai.txt
+pytest>=9
+pyinstaller>=6.17
+ruff>=0.8

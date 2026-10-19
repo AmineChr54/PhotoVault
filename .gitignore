@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Runtime / dev data (library index, AI models, thumbs, logs, venv)
+data/
+
+# Build output
+build/
+dist/
+
+# Local DBs
+*.db
+*.sqlite
+
+# Claude Code runtime state
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+
+# Screenshots from the UI smoke run
+ui_out/

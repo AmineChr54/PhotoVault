@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements*.txt
+            constraints.txt
+      - run: pip install -c constraints.txt -r requirements-dev.txt
+      - run: python -m pytest -q -p no:cacheprovider tests
+      - name: Build exe
+        run: |
+          python tools/make_icon.py
+          python -m PyInstaller --noconfirm --clean --windowed --name PhotoVault --icon icon.ico --add-data "icon.ico;." --add-data "icon-256.png;." --add-data "docs/USER_GUIDE.md;docs" --add-data "CHANGELOG.md;." --add-data "photovault;worker_src/photovault" --add-data "requirements-ai.txt;worker_src" --add-data "constraints.txt;worker_src" --exclude-module tkinter --exclude-module matplotlib run.pyw
+      - name: Zip
+        run: Compress-Archive -Path dist/PhotoVault -DestinationPath "PhotoVault-${{ github.ref_name }}-win64.zip"
+      - name: Publish release
+        run: gh release create "${{ github.ref_name }}" "PhotoVault-${{ github.ref_name }}-win64.zip" --generate-notes --title "Photo Vault ${{ github.ref_name }}" ${{ contains(github.ref_name, '-') && '--prerelease' || '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

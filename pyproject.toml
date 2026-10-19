@@ -1,0 +1,13 @@
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+extend-exclude = ["build", "dist", "data"]
+
+[tool.ruff.lint]
+# Correctness only; style is left alone so the existing code base stays green.
+select = ["E9", "F"]
+ignore = ["F401", "F841"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -p no:cacheprovider"

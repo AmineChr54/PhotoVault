@@ -1,0 +1,7 @@
+# Optional AI subsystem (photovault/ai): search, people/face clustering
+numpy>=2.2
+opencv-python>=4.12
+scikit-learn>=1.7
+onnxruntime>=1.20
+huggingface_hub>=1.0
+tokenizers>=0.21
