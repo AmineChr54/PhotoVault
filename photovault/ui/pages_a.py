@@ -3,6 +3,7 @@ import os
 import time
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QButtonGroup, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
                                QListWidget, QListWidgetItem, QRadioButton, QScrollArea, QSplitter, QTabWidget,
                                QVBoxLayout, QWidget)
@@ -180,7 +181,7 @@ class FileCard(QFrame):
         self.img.setCursor(Qt.PointingHandCursor)
         self.img.mousePressEvent = lambda e: open_file(self.path)
         lay.addWidget(self.img)
-        self.radio = QRadioButton("Keep this one")
+        self.radio = QRadioButton("Keep this one" + (f"  [{idx + 1}]" if idx < 9 else ""))
         keep_group.addButton(self.radio, idx)
         lay.addWidget(self.radio)
         res = f"{row['width']}×{row['height']}" if row["width"] else ""
@@ -234,8 +235,14 @@ class GroupView(QWidget):
         self.all_btn = button("Quarantine extras in ALL shown groups…", danger=True)
         self.all_btn.clicked.connect(self.quarantine_all)
         self.all_btn.setEnabled(False)
+        self.best_all_btn = button("Auto-pick best for all shown…")
+        self.best_all_btn.setToolTip("Re-choose the copy to keep in every shown group. Shows the rule first; "
+                                     "nothing is moved.")
+        self.best_all_btn.clicked.connect(self.auto_pick_all)
+        self.best_all_btn.setEnabled(False)
         page.actions += [self.find_btn]
-        lay.addLayout(hrow(self.find_btn, QLabel("Folder:"), self.folder, self.summary, None, self.all_btn))
+        lay.addLayout(hrow(self.find_btn, QLabel("Folder:"), self.folder, self.summary, None, self.best_all_btn,
+                           self.all_btn))
 
         split = QSplitter()
         self.list = QListWidget()
@@ -256,11 +263,14 @@ class GroupView(QWidget):
         self.q_btn.clicked.connect(self.quarantine_current)
         self.ignore_btn = button("Not duplicates - ignore this group")
         self.ignore_btn.clicked.connect(self.ignore_current)
+        self.best_btn = button("Auto-pick best")
+        self.best_btn.setToolTip("Rule: " + dupes.describe_auto_pick())
+        self.best_btn.clicked.connect(self.auto_pick_current)
         hint = QLabel("Exact copies are byte-for-byte identical - removing extras loses nothing." if not similar else
                       "Similar = same picture in another size/quality (e.g. WhatsApp copy). Check before removing.")
         hint.setObjectName("pageSub")
         hint.setWordWrap(True)
-        rl.addLayout(hrow(self.q_btn, self.ignore_btn, hint))
+        rl.addLayout(hrow(self.q_btn, self.ignore_btn, self.best_btn, hint))
         split.addWidget(right)
         split.setSizes([330, 900])
         lay.addWidget(split, 1)
@@ -268,10 +278,99 @@ class GroupView(QWidget):
         self.cards = []
         self.ctx.thumbs.ready.connect(self._thumb_ready)
         self._set_group_buttons(False)
+        self._make_shortcuts()
+
+    def _make_shortcuts(self):
+        """Keyboard review: Up/Down = previous/next group, 1-9 = keep that copy, Enter = quarantine the others,
+        I = ignore the group, O = open the kept file. Only active while this view has focus."""
+        def add(key, fn):
+            sc = QShortcut(QKeySequence(key), self)
+            sc.setContext(Qt.WidgetWithChildrenShortcut)
+            sc.activated.connect(fn)
+            return sc
+        add(Qt.Key_Up, lambda: self.step_group(-1))
+        add(Qt.Key_Down, lambda: self.step_group(1))
+        for n in range(1, 10):
+            add(str(n), lambda n=n: self.set_keep(n - 1))
+        add(Qt.Key_Return, self.shortcut_quarantine)
+        add(Qt.Key_Enter, self.shortcut_quarantine)
+        add("I", self.shortcut_ignore)
+        add("O", self.open_kept)
 
     def _set_group_buttons(self, on):
         self.q_btn.setEnabled(on)
         self.ignore_btn.setEnabled(on)
+        self.best_btn.setEnabled(on)
+
+    def _update_summary(self):
+        wasted = sum(g["wasted"] for g in self.shown)
+        extra = sum(len(g["files"]) - 1 for g in self.shown)
+        row = self.list.currentRow()
+        where = f"group {row + 1:,} of {len(self.shown):,}" if 0 <= row < len(self.shown) else f"{len(self.shown):,} groups"
+        self.summary.setText(f"{where} · {extra:,} extra files · {human(wasted)} to reclaim")
+
+    def _item_text(self, g):
+        keep = g["files"][g["keep"]]
+        return (f"{len(g['files'])} {'photos' if self.similar else 'copies'} · {human(g['wasted'])} extra\n"
+                f"keep: {keep['top']}\\{keep['name']}")
+
+    def step_group(self, delta):
+        row = self.list.currentRow()
+        if self.shown and 0 <= row + delta < len(self.shown):
+            self.list.setCurrentRow(row + delta)
+
+    def _current(self):
+        idx = self.list.currentRow()
+        return self.shown[idx] if 0 <= idx < len(self.shown) else None
+
+    def set_keep(self, i):
+        """Choose which copy of the current group stays (updates the card, the list entry and the counter)."""
+        g = self._current()
+        if g is None or not 0 <= i < len(g["files"]):
+            return
+        g["keep"] = i
+        if self.keep_group is not None and self.keep_group.button(i) is not None:
+            self.keep_group.button(i).setChecked(True)
+        self.list.item(self.list.currentRow()).setText(self._item_text(g))
+
+    def shortcut_quarantine(self):
+        if self.q_btn.isEnabled() and not self.ctx.tasks.busy:
+            self.quarantine_current()
+
+    def shortcut_ignore(self):
+        if self.ignore_btn.isEnabled() and not self.ctx.tasks.busy:
+            self.ignore_current()
+
+    def open_kept(self):
+        g = self._current()
+        if g is not None:
+            open_file(g["files"][g["keep"]]["path"])
+
+    def auto_pick_current(self):
+        g = self._current()
+        if g is not None:
+            self.set_keep(dupes.pick_best(g["files"], self.ctx.settings))
+
+    def auto_pick_all(self):
+        changes = dupes.auto_pick(self.shown, self.ctx.settings)
+        rule = dupes.describe_auto_pick()
+        if not changes:
+            info(self, "Auto-pick best", f"Rule: {rule}\n\nThe copy marked 'Keep' is already the best in all "
+                 f"{len(self.shown):,} shown groups.")
+            return
+        sample = "\n".join(f"  {g['files'][g['keep']]['name']}  ->  {g['files'][b]['top']}\\{g['files'][b]['name']}"
+                           for g, b in changes[:5])
+        if not confirm(self, "Auto-pick best", f"Rule (in this order): {rule}.\n\n"
+                       f"This changes which copy is kept in {len(changes):,} of {len(self.shown):,} shown groups. "
+                       f"Examples (current keep -> new keep):\n{sample}\n\n"
+                       "Nothing is moved: you can still check each group, then press Enter or use the "
+                       "quarantine buttons. Apply?"):
+            return
+        for g, b in changes:
+            g["keep"] = b
+        for r, g in enumerate(self.shown):
+            self.list.item(r).setText(self._item_text(g))
+        self.show_group(self.list.currentRow())
 
     def find(self):
         fn = dupes.similar_groups if self.similar else dupes.exact_groups
@@ -294,14 +393,10 @@ class GroupView(QWidget):
         self.shown = [g for g in self.groups if t is None or any(f["top"] == t for f in g["files"])]
         self.list.clear()
         for g in self.shown:
-            keep = g["files"][g["keep"]]
-            it = QListWidgetItem(f"{len(g['files'])} {'photos' if self.similar else 'copies'} · {human(g['wasted'])} extra\n"
-                                 f"keep: {keep['top']}\\{keep['name']}")
-            self.list.addItem(it)
-        wasted = sum(g["wasted"] for g in self.shown)
-        extra = sum(len(g["files"]) - 1 for g in self.shown)
-        self.summary.setText(f"{len(self.shown):,} groups · {extra:,} extra files · {human(wasted)}")
+            self.list.addItem(QListWidgetItem(self._item_text(g)))
+        self._update_summary()
         self.all_btn.setEnabled(bool(self.shown) and not self.similar)
+        self.best_all_btn.setEnabled(bool(self.shown))
         if self.shown:
             self.list.setCurrentRow(0)
         else:
@@ -314,7 +409,9 @@ class GroupView(QWidget):
         self.cards = []
         if idx < 0 or idx >= len(self.shown):
             self._set_group_buttons(False)
+            self._update_summary()
             return
+        self._update_summary()
         g = self.shown[idx]
         self.keep_group = QButtonGroup(self)
         for i, f in enumerate(g["files"]):
@@ -322,7 +419,7 @@ class GroupView(QWidget):
             self.cards_lay.addWidget(card)
             self.cards.append(card)
         self.keep_group.button(g["keep"]).setChecked(True)
-        self.keep_group.idClicked.connect(lambda i: g.__setitem__("keep", i))
+        self.keep_group.idClicked.connect(self.set_keep)
         self._set_group_buttons(True)
 
     def _thumb_ready(self, path):

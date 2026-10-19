@@ -35,6 +35,13 @@ are preferred automatically), then **Move the other copies to quarantine**. **Sh
 Explorer. **Not duplicates - ignore this group** hides a group for good. **Quarantine extras in ALL shown
 groups...** does it for every group under the current *Folder:* filter, after a confirmation.
 
+Keyboard review (click a group first): **Up/Down** previous/next group, **1-9** keep that copy (the number is shown
+on each card), **Enter** move the others to quarantine, **I** ignore the group, **O** open the kept file. The
+counter shows where you are ("group 12 of 340 - 4.2 GB to reclaim"). **Auto-pick best** chooses the copy to keep
+using this rule, in order: hand-picked folder, larger resolution, larger file size, earlier date taken.
+**Auto-pick best for all shown...** shows the rule and examples first. Picking never moves files; only
+quarantining does.
+
 ## Organize
 Sorts everything under the organized folder (Life\Year\Year-Month, Chat Media, Screenshots, Gaming, Projects,
 Documents...) according to the folder rules in Settings. Click **1. Build plan (preview)**, read it, then

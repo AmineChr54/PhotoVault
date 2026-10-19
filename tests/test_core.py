@@ -371,3 +371,52 @@ def test_default_layout_scan_skips_quarantine(tmp_path):
     s = config.Settings(library_roots=[str(pics)], organized_root=str(pics / "Photos"),
                         quarantine_dir=str(pics / "_Duplicates_To_Review"))
     assert [os.path.basename(p) for p, _, _ in scanner.walk_roots(s)] == ["a.jpg"]
+
+
+# ---------- keep-best auto-pick (pure ranking) ----------
+def _row(path, top, size=100, w=0, h=0, date=None):
+    return {"path": path, "top": top, "size": size, "width": w, "height": h, "date_taken": date}
+
+
+def test_pick_best_default_rule_order(env):
+    s, conn, lib, org, tmp = env
+    raw = _row(str(lib / "Redmi 10 (12)" / "a.jpg"), "Redmi 10 (12)", size=900, w=4000, h=3000, date="2020-01-01 00:00:00")
+    hand = _row(str(lib / "tsawer lmama w baba" / "a.jpg"), "tsawer lmama w baba", size=100, w=800, h=600)
+    assert s.category_for("tsawer lmama w baba") == "curated" and s.category_for("Redmi 10 (12)") == "raw"
+    # hand-picked folder wins over a larger raw dump
+    assert dupes.pick_best([raw, hand], s) == 1
+    # same folder tier: larger resolution, then larger size, then earliest date, then first in list
+    a = _row(str(lib / "X" / "a.jpg"), "X", size=100, w=800, h=600, date="2021-05-01 00:00:00")
+    b = _row(str(lib / "X" / "b.jpg"), "X", size=100, w=1600, h=1200, date="2022-05-01 00:00:00")
+    c = _row(str(lib / "X" / "c.jpg"), "X", size=500, w=800, h=600, date="2019-05-01 00:00:00")
+    assert dupes.pick_best([a, b, c], s) == 1
+    assert dupes.pick_best([a, c], s) == 1  # same resolution -> larger size
+    c2 = dict(c, size=100)
+    assert dupes.pick_best([a, c2], s) == 1  # same size -> earlier date
+    assert dupes.pick_best([dict(a, date_taken=None), a], s) == 1  # undated loses to dated
+    assert dupes.pick_best([a, dict(a)], s) == 0  # full tie -> keeps the existing first
+
+
+def test_pick_best_custom_order_and_validation(env):
+    s, conn, lib, org, tmp = env
+    small_old = _row(str(lib / "X" / "a.jpg"), "X", size=100, w=800, h=600, date="2010-01-01 00:00:00")
+    big_new = _row(str(lib / "X" / "b.jpg"), "X", size=900, w=1600, h=1200, date="2024-01-01 00:00:00")
+    assert dupes.pick_best([small_old, big_new], s) == 1
+    assert dupes.pick_best([small_old, big_new], s, ("date", "folder", "resolution", "size")) == 0
+    assert dupes.describe_auto_pick(("size", "date")) == "larger file size > earlier date taken"
+    with pytest.raises(ValueError):
+        dupes.pick_best([small_old], s, ("bogus",))
+
+
+def test_auto_pick_previews_only_changes_and_moves_nothing(env):
+    s, conn, lib, org, tmp = env
+    make_jpg(str(lib / "Redmi 10 (12)" / "a.jpg"), size=(400, 300))
+    scanner.scan(s, conn=conn)
+    before = os.listdir(lib / "Redmi 10 (12)")
+    rows = conn.execute("SELECT * FROM files").fetchall()
+    g_ok = {"files": rows, "keep": 0}
+    g_other = {"files": [dict(rows[0], width=100, height=100), dict(rows[0])], "keep": 0}
+    out = dupes.auto_pick([g_ok, g_other], s)
+    assert out == [(g_other, 1)]
+    assert g_other["keep"] == 0  # the preview does not modify the group
+    assert os.listdir(lib / "Redmi 10 (12)") == before

@@ -4,6 +4,7 @@ All notable changes. Format: Added / Changed / Fixed. Versions follow semver; ta
 
 ## Unreleased
 ### Added
+- Faster duplicate review (#6): keyboard shortcuts on the Duplicates page (Up/Down = previous/next group, 1-9 = keep that copy, Enter = move the others to quarantine, I = ignore the group, O = open the kept file), a live "group 12 of 340 - 4.2 GB to reclaim" counter, and **Auto-pick best** (this group) / **Auto-pick best for all shown...** (with a preview). Rule: hand-picked folder, larger resolution, larger file size, earlier date. Picking only changes which copy is kept; nothing moves until you quarantine, with the usual byte-for-byte re-check.
 - In-app Help page (#28): the user guide and a What's new section render inside the app (sidebar > Help, or F1 anywhere). New About dialog (sidebar footer or Help page) with version, GitHub link, privacy note and AI model credits (including InsightFace's non-commercial licence). The first-run notice links to Help. The guide and changelog are bundled into the exe.
 
 ### Changed

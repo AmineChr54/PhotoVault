@@ -18,18 +18,23 @@ def _folder_counts(conn):
     return {r["top"]: r["n"] for r in conn.execute("SELECT top, COUNT(*) n FROM files GROUP BY top")}
 
 
-def keep_rank(row, settings, folder_counts):
-    """Lower is better. Organized/hand-picked folders win over raw phone dumps; then the
-    bigger (more complete) dump; then a clean filename; then a shorter path."""
+def _folder_tier(row, settings) -> int:
+    """0 = organized/hand-picked folder, 1 = neutral, 2 = raw phone dump. Lower is better."""
     path = row["path"]
     org = os.path.normcase(settings.organized_root) + os.sep
     inbox = os.path.normcase(settings.inbox) + os.sep
     norm = os.path.normcase(path)
     if norm.startswith(org) and not norm.startswith(inbox):
-        tier = 0
-    else:
-        cat = settings.category_for(row["top"])
-        tier = 0 if cat == "curated" else 2 if cat == "raw" else 1
+        return 0
+    cat = settings.category_for(row["top"])
+    return 0 if cat == "curated" else 2 if cat == "raw" else 1
+
+
+def keep_rank(row, settings, folder_counts):
+    """Lower is better. Organized/hand-picked folders win over raw phone dumps; then the
+    bigger (more complete) dump; then a clean filename; then a shorter path."""
+    path = row["path"]
+    tier = _folder_tier(row, settings)
     stem = os.path.splitext(os.path.basename(path))[0].strip()
     return (tier, 1 if COPY_MARK.search(stem) else 0, -folder_counts.get(row["top"], 0), len(path), path.lower())
 
@@ -182,6 +187,49 @@ def similar_groups(conn, settings, progress=_noop, cancel=None) -> list:
                        "wasted": sum(m["size"] for m in members[1:])})
     groups.sort(key=lambda g: -g["wasted"])
     return groups
+
+
+# ---- "keep best" auto-pick (pure ranking; never moves anything) ----
+AUTO_PICK_DEFAULT = ("folder", "resolution", "size", "date")
+AUTO_PICK_LABELS = {"folder": "hand-picked folder", "resolution": "larger resolution",
+                    "size": "larger file size", "date": "earlier date taken"}
+
+
+def describe_auto_pick(order=AUTO_PICK_DEFAULT) -> str:
+    """The rule as one human-readable line, e.g. 'hand-picked folder > larger resolution > ...'."""
+    return " > ".join(AUTO_PICK_LABELS[c] for c in order)
+
+
+def pick_best(files, settings, order=AUTO_PICK_DEFAULT) -> int:
+    """Index in `files` of the copy to keep. Criteria are applied in `order` (each in
+    AUTO_PICK_LABELS); remaining ties keep the group's existing order (first wins)."""
+    unknown = [c for c in order if c not in AUTO_PICK_LABELS]
+    if unknown:
+        raise ValueError(f"unknown auto-pick criteria: {unknown}")
+    if not files:
+        raise ValueError("empty group")
+
+    def part(row, crit):
+        if crit == "folder":
+            return _folder_tier(row, settings)
+        if crit == "resolution":
+            return -((row["width"] or 0) * (row["height"] or 0))
+        if crit == "size":
+            return -(row["size"] or 0)
+        d = row["date_taken"] or ""  # ISO text; undated copies lose to dated ones
+        return (1, "") if not d else (0, d)
+
+    return min(range(len(files)), key=lambda i: tuple(part(files[i], c) for c in order) + (i,))
+
+
+def auto_pick(groups, settings, order=AUTO_PICK_DEFAULT) -> list:
+    """Preview: [(group, best_index)] for groups whose current pick differs from the best."""
+    out = []
+    for g in groups:
+        best = pick_best(g["files"], settings, order)
+        if best != g["keep"]:
+            out.append((g, best))
+    return out
 
 
 def ignore_group(conn, key: str) -> None:
