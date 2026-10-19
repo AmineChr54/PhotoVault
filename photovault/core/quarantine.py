@@ -1,11 +1,15 @@
 """Quarantine: files are moved here instead of being deleted. Restore or empty (to Recycle Bin) later."""
 import csv
 import os
+import shutil
 import time
 
 from send2trash import send2trash
 
 from . import db, hashing, journal, scanner
+
+
+RECYCLE_LARGE_BYTES = 4 * 1024**3
 
 
 def _noop(*a):
@@ -87,6 +91,62 @@ def restore(conn, settings, ids, progress=_noop, cancel=None) -> dict:
     db.new_op(conn, "restore", f"Restored {ok:,} files from quarantine", False)
     conn.commit()
     return {"restored": ok, "failed": failed}
+
+
+def _rows_for_ids(conn, ids) -> list:
+    rows = []
+    ids = list(ids)
+    for i in range(0, len(ids), 500):
+        part = ids[i:i + 500]
+        rows += conn.execute(f"SELECT * FROM quarantine WHERE state='in' AND id IN ({','.join('?' * len(part))})",
+                             part).fetchall()
+    return rows
+
+
+def recycle_bin_limit(path: str) -> int:
+    """Rough size above which Windows may skip the Recycle Bin and delete a file permanently: the
+    bin's per-drive cap is configurable, so this is a conservative estimate (4 GB, or 5% of the drive)."""
+    limit = RECYCLE_LARGE_BYTES
+    try:
+        limit = min(limit, int(shutil.disk_usage(path).total * 0.05))
+    except OSError:
+        pass
+    return max(limit, 1)
+
+
+def preview_empty(conn, settings, ids) -> dict:
+    """Read-only summary of what 'Send to Recycle Bin' is about to do (no file is touched):
+    count, bytes, oldest/newest quarantine time, last successful backup and how many of the files
+    were quarantined after it (not covered by a backup), and files that may be too big for the bin."""
+    rows = _rows_for_ids(conn, ids)
+    stamps = [r["ts"] for r in rows if r["ts"] is not None]
+    last = db.get_meta(conn, "last_backup")
+    last = float(last) if last else None
+    uncovered = sum(1 for r in rows if last is None or (r["ts"] or 0) > last)
+    limit = recycle_bin_limit(settings.quarantine_dir if os.path.isdir(settings.quarantine_dir) else
+                              os.path.dirname(os.path.abspath(settings.quarantine_dir)))
+    large = sorted(((r["original"], r["size"] or 0) for r in rows if (r["size"] or 0) >= limit),
+                   key=lambda x: -x[1])
+    return {"count": len(rows), "bytes": sum(r["size"] or 0 for r in rows),
+            "oldest": min(stamps) if stamps else None, "newest": max(stamps) if stamps else None,
+            "last_backup": last, "uncovered": uncovered, "large": large, "large_limit": limit}
+
+
+def preview_move(items, samples: int = 5) -> dict:
+    """Read-only summary of a bulk quarantine request (items as for quarantine_files): how many
+    files exist, their total size, and a few (path, kept_path) examples of what stays and what moves."""
+    count = nbytes = 0
+    examples = []
+    for path, kept in items:
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            continue
+        count += 1
+        nbytes += size
+        if len(examples) < samples:
+            examples.append((path, kept))
+    return {"count": count, "bytes": nbytes, "samples": examples}
 
 
 def empty(conn, settings, ids, progress=_noop, cancel=None) -> dict:

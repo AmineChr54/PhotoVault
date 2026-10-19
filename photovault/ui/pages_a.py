@@ -357,11 +357,16 @@ class GroupView(QWidget):
     def quarantine_all(self):
         gs = list(self.shown)
         items = [it for g in gs for it in self._items_for(g)]
-        size = sum(g["wasted"] for g in gs)
-        if not confirm(self, "Quarantine all", f"Move {len(items):,} extra copies ({human(size)}) to quarantine?\n\n"
-                       "For each group the copy marked 'Keep' stays where it is. Every file is re-checked to be "
-                       "byte-identical first. You can restore everything from the Quarantine page or undo it in "
-                       "the Activity log."):
+        pv = quarantine.preview_move(items)
+        lines = [f"Move {pv['count']:,} extra copies ({human(pv['bytes'])}) to quarantine?", "",
+                 "For each group the copy marked 'Keep' stays where it is. Every file is re-checked to be "
+                 "byte-identical first. You can restore everything from the Quarantine page or undo it in "
+                 "the Activity log.", "", "Examples (moves -> stays):"]
+        for path, kept in pv["samples"]:
+            lines.append(f"  {path}" + (f"\n    -> keeps {kept}" if kept else ""))
+        if pv["count"] > len(pv["samples"]):
+            lines.append(f"  ... and {pv['count'] - len(pv['samples']):,} more")
+        if not confirm(self, "Quarantine all", "\n".join(lines)):
             return
         self.page.run("Moving to quarantine",
                       lambda conn, prog, cancel: quarantine.quarantine_files(

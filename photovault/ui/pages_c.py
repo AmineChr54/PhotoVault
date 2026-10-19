@@ -313,6 +313,39 @@ class BrowsePage(Page):
 
 
 # =================================================================== Quarantine
+def _day(ts) -> str:
+    return time.strftime("%Y-%m-%d", time.localtime(ts))
+
+
+def empty_confirm_text(pv: dict) -> tuple:
+    """(message, has_warning) for the 'Send to Recycle Bin' confirmation, from quarantine.preview_empty."""
+    lines = [f"Send {pv['count']:,} files ({human(pv['bytes'])} to free) to the Windows Recycle Bin?"]
+    if pv["oldest"] is not None:
+        lines.append(f"Quarantined between {_day(pv['oldest'])} and {_day(pv['newest'])}.")
+    warn = False
+    lines.append("")
+    if pv["last_backup"] is None:
+        warn = True
+        lines.append("WARNING: no successful backup yet, so none of these files are covered by a backup.")
+    else:
+        lines.append(f"Last successful backup: {_day(pv['last_backup'])}.")
+        if pv["uncovered"]:
+            warn = True
+            lines.append(f"WARNING: {pv['uncovered']:,} of these files were quarantined after that backup, "
+                         "so a backup does not cover them yet.")
+        else:
+            lines.append("All of these files were quarantined before that backup.")
+    if pv["large"]:
+        warn = True
+        lines += ["", f"WARNING: {len(pv['large']):,} very large file(s) (over {human(pv['large_limit'])}) may be too "
+                      "big for the Recycle Bin and could be deleted permanently by Windows:"]
+        lines += [f"  {os.path.basename(p)} ({human(sz)})" for p, sz in pv["large"][:8]]
+        if len(pv["large"]) > 8:
+            lines.append(f"  ... and {len(pv['large']) - 8:,} more")
+    lines += ["", "Other files stay recoverable from the Recycle Bin until you empty it. Tip: back up first."]
+    return "\n".join(lines), warn
+
+
 class QuarantinePage(Page):
     def __init__(self, ctx):
         super().__init__(ctx)
@@ -378,11 +411,8 @@ class QuarantinePage(Page):
         ids = self._ids(all_rows)
         if not ids:
             return
-        size = sum(x["size"] or 0 for x in self.rows if x["id"] in set(ids))
-        if not confirm(self, "Send to Recycle Bin",
-                       f"Send {len(ids):,} files ({human(size)}) to the Windows Recycle Bin?\n\n"
-                       "You can still get them back from the Recycle Bin until you empty it. (If a file is too big "
-                       "for the Recycle Bin, Windows may delete it permanently.)\n\nTip: do this after a backup."):
+        text, warn = empty_confirm_text(quarantine.preview_empty(self.ctx.conn, self.ctx.settings, ids))
+        if not confirm(self, "Send to Recycle Bin", text, warn=warn):
             return
         self.run("Sending to Recycle Bin", lambda conn, prog, cancel: quarantine.empty(conn, self.ctx.settings, ids, prog, cancel),
                  lambda r: (self.on_show(), info(self, "Done", f"{r['emptied']:,} files ({human(r['bytes'])}) sent to the Recycle Bin.")))

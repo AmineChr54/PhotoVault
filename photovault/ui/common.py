@@ -41,7 +41,11 @@ def open_file(path: str) -> None:
         os.startfile(path)
 
 
-def confirm(parent, title: str, text: str) -> bool:
+def confirm(parent, title: str, text: str, warn: bool = False) -> bool:
+    if warn:
+        box = QMessageBox(QMessageBox.Warning, title, text, QMessageBox.Yes | QMessageBox.No, parent)
+        box.setDefaultButton(QMessageBox.No)
+        return box.exec() == QMessageBox.Yes
     return QMessageBox.question(parent, title, text, QMessageBox.Yes | QMessageBox.No,
                                 QMessageBox.No) == QMessageBox.Yes
 

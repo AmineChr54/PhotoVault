@@ -4,6 +4,7 @@ All notable changes. Format: Added / Changed / Fixed. Versions follow semver; ta
 
 ## Unreleased
 ### Added
+- Quarantine safety net (#7): "Send to Recycle Bin" now shows how many files and how much space it frees, the oldest and newest quarantine date, the last successful backup (with a warning if no backup exists or files were quarantined after it) and lists very large files that Windows may delete permanently instead of recycling. "Quarantine extras in ALL shown groups" shows the count, space and a sample of what moves and what is kept. Only the confirmation text changed; what gets moved or deleted is the same.
 - In-app Help page (#28): the user guide and a What's new section render inside the app (sidebar > Help, or F1 anywhere). New About dialog (sidebar footer or Help page) with version, GitHub link, privacy note and AI model credits (including InsightFace's non-commercial licence). The first-run notice links to Help. The guide and changelog are bundled into the exe.
 
 ### Changed

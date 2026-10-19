@@ -371,3 +371,67 @@ def test_default_layout_scan_skips_quarantine(tmp_path):
     s = config.Settings(library_roots=[str(pics)], organized_root=str(pics / "Photos"),
                         quarantine_dir=str(pics / "_Duplicates_To_Review"))
     assert [os.path.basename(p) for p, _, _ in scanner.walk_roots(s)] == ["a.jpg"]
+
+
+# ---------- quarantine previews (read-only) ----------
+def _quarantined(env, names):
+    s, conn, lib, org, tmp = env
+    for n, data in names:
+        write(str(lib / "A" / n), data)
+    scanner.scan(s, conn=conn)
+    quarantine.quarantine_files(conn, s, [(str(lib / "A" / n), None) for n, _ in names], "junk", "t")
+    return [r["id"] for r in conn.execute("SELECT id FROM quarantine ORDER BY id")]
+
+
+def test_preview_empty_without_backup_touches_nothing(env):
+    s, conn, lib, org, tmp = env
+    ids = _quarantined(env, [("1.jpg", b"1" * 10), ("2.jpg", b"2" * 30)])
+    pv = quarantine.preview_empty(conn, s, ids)
+    assert pv["count"] == 2 and pv["bytes"] == 40
+    assert pv["oldest"] <= pv["newest"]
+    assert pv["last_backup"] is None and pv["uncovered"] == 2
+    assert pv["large"] == []
+    assert len(os.listdir(tmp / "_Q" / "Library" / "A")) == 2  # nothing moved or deleted
+    assert conn.execute("SELECT COUNT(*) FROM quarantine WHERE state='in'").fetchone()[0] == 2
+
+
+def test_preview_empty_backup_coverage(env):
+    s, conn, lib, org, tmp = env
+    ids = _quarantined(env, [("1.jpg", b"1"), ("2.jpg", b"2")])
+    conn.execute("UPDATE quarantine SET ts=? WHERE id=?", (1000.0, ids[0]))
+    conn.execute("UPDATE quarantine SET ts=? WHERE id=?", (3000.0, ids[1]))
+    db.set_meta(conn, "last_backup", 2000.0)
+    pv = quarantine.preview_empty(conn, s, ids)
+    assert pv["last_backup"] == 2000.0
+    assert pv["uncovered"] == 1  # only the file quarantined after the backup
+    assert (pv["oldest"], pv["newest"]) == (1000.0, 3000.0)
+    db.set_meta(conn, "last_backup", 5000.0)
+    assert quarantine.preview_empty(conn, s, ids)["uncovered"] == 0
+
+
+def test_preview_empty_flags_files_too_big_for_recycle_bin(env, monkeypatch):
+    s, conn, lib, org, tmp = env
+    ids = _quarantined(env, [("small.jpg", b"1"), ("big.jpg", b"2" * 500)])
+    monkeypatch.setattr(quarantine, "recycle_bin_limit", lambda path: 100)
+    pv = quarantine.preview_empty(conn, s, ids)
+    assert [(os.path.basename(p), sz) for p, sz in pv["large"]] == [("big.jpg", 500)]
+    assert pv["large_limit"] == 100
+
+
+def test_preview_empty_ignores_ids_not_in_quarantine(env):
+    s, conn, lib, org, tmp = env
+    ids = _quarantined(env, [("1.jpg", b"1")])
+    assert quarantine.preview_empty(conn, s, ids + [99999])["count"] == 1
+    assert quarantine.preview_empty(conn, s, [])["count"] == 0
+
+
+def test_preview_move_counts_existing_files_and_samples(env):
+    s, conn, lib, org, tmp = env
+    for i in range(8):
+        write(str(lib / "A" / f"{i}.jpg"), b"x" * 10)
+    items = [(str(lib / "A" / f"{i}.jpg"), str(lib / "keep.jpg")) for i in range(8)]
+    items.append((str(lib / "A" / "gone.jpg"), None))  # missing file is not counted
+    pv = quarantine.preview_move(items)
+    assert pv["count"] == 8 and pv["bytes"] == 80
+    assert len(pv["samples"]) == 5 and pv["samples"][0][1] == str(lib / "keep.jpg")
+    assert all(os.path.exists(lib / "A" / f"{i}.jpg") for i in range(8))  # read-only
