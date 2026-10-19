@@ -20,6 +20,9 @@ MIN_FACE = 28  # px on the decoded image; smaller faces are unreliable
 CROP = 144
 THUMB_MAX = 384
 BATCH = 16
+# Decoded images (~6 MB each at 1600 px) in flight at once = WINDOW (queued reads) + BATCH (being processed).
+WINDOW = BATCH * 2
+FALLBACK_DET = 640  # smaller SCRFD input used to retry a photo whose full-size detection failed (e.g. out of memory)
 IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 
 
@@ -129,13 +132,26 @@ def load_one(item):
         return dict(path=path, size=size, mtime=mtime, error=f"{type(e).__name__}: {e}"[:200])
 
 
+def _atomic_save_jpeg(img, out, quality):
+    """Write via a temp file + rename so a killed run never leaves a truncated jpg that later runs would trust."""
+    tmp = out.with_name(out.name + ".tmp")
+    try:
+        img.save(tmp, "JPEG", quality=quality)
+        os.replace(tmp, out)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
 def save_thumb(img, h):
     paths.THUMBS.mkdir(parents=True, exist_ok=True)
     out = paths.THUMBS / f"{h}.jpg"
-    if not out.exists():
+    if not (out.exists() and out.stat().st_size > 0):
         t = img.copy()
         t.thumbnail((THUMB_MAX, THUMB_MAX), Image.Resampling.BILINEAR)
-        t.save(out, "JPEG", quality=82)
+        _atomic_save_jpeg(t, out, 82)
 
 
 def save_face_crop(img, box, face_id):
@@ -144,39 +160,117 @@ def save_face_crop(img, box, face_id):
     m = 0.25 * max(x2 - x1, y2 - y1)
     c = img.crop((max(0, x1 - m), max(0, y1 - m), min(img.width, x2 + m), min(img.height, y2 + m)))
     c.thumbnail((CROP, CROP), Image.Resampling.LANCZOS)
-    c.save(paths.FACE_CROPS / f"{face_id}.jpg", "JPEG", quality=88)
+    _atomic_save_jpeg(c, paths.FACE_CROPS / f"{face_id}.jpg", 88)
+
+
+def repair_after_interrupt(conn):
+    """Clean up leftovers of a run that died mid-way. Index rows are committed one batch at a time, so a
+    killed run normally leaves nothing half-written; this removes any face rows whose photo never got an
+    embedding (so re-indexing that photo cannot duplicate its faces) and stale temp files. Returns #faces removed."""
+    orphans = [r["id"] for r in conn.execute(
+        "SELECT id FROM face WHERE hash NOT IN (SELECT hash FROM embedding)")]
+    for fid in orphans:
+        conn.execute("DELETE FROM face WHERE id=?", (fid,))
+        try:
+            os.remove(paths.FACE_CROPS / f"{fid}.jpg")
+        except OSError:
+            pass
+    conn.commit()
+    for d in (paths.THUMBS, paths.FACE_CROPS):
+        if d.is_dir():
+            for t in d.glob("*.tmp"):
+                try:
+                    t.unlink()
+                except OSError:
+                    pass
+    return len(orphans)
+
+
+def _detect_faces(faces, rgb):
+    """([(box, score, embedding)], error_or_None) for faces large enough to keep. A failure (e.g. MemoryError
+    in the detector) is retried once with a smaller detector input; if that fails too the photo just gets no
+    faces. Never raises, so one bad photo cannot kill the run."""
+    err = None
+    for size in (None, FALLBACK_DET):
+        try:
+            found = []
+            for box, score, kps in (faces.detect(rgb) if size is None else faces.detect(rgb, det_size=size)):
+                if min(box[2] - box[0], box[3] - box[1]) < MIN_FACE:
+                    continue
+                found.append((box, score, faces.embed(rgb, kps)))
+            return found, None
+        except Exception as ex:
+            err = ex
+    return [], err
+
+
+def _encode_all(sig, ok):
+    """One embedding per photo (an Exception instance for a photo that could not be embedded). The batch is
+    tried at once; if that fails the photos are retried one by one so a single bad image costs only itself."""
+    try:
+        return list(sig.encode_images(np.stack([sig.prep(b["img"]) for b in ok])))
+    except Exception as ex:
+        if len(ok) == 1:
+            return [ex]
+    out = []
+    for b in ok:
+        try:
+            out.append(sig.encode_images(np.stack([sig.prep(b["img"])]))[0])
+        except Exception as ex:
+            out.append(ex)
+    return out
+
+
+def _record_error(conn, b, msg):
+    conn.execute("INSERT OR REPLACE INTO seen(path,size,mtime,hash) VALUES (?,?,?,NULL)",
+                 (b["path"], b["size"], b["mtime"]))
+    conn.execute("INSERT OR REPLACE INTO photo(hash,path,size,mtime,status,error) VALUES (?,?,?,?,?,?)",
+                 ("err:" + b["path"], b["path"], b["size"], b["mtime"], "error", msg))
 
 
 def run(limit=None, use_faces=True, prefer_gpu=True, cancel=None, workers=4, sample_every=None):
     from .models import Faces, SigLIP
     conn = store.connect()
+    try:
+        _run(conn, SigLIP, Faces, limit, use_faces, prefer_gpu, cancel, workers, sample_every)
+    finally:
+        conn.close()  # an interrupted batch is rolled back, never half-committed
+
+
+def _run(conn, SigLIP, Faces, limit, use_faces, prefer_gpu, cancel, workers, sample_every):
     t0 = time.time()
     emit(event="listing")
+    removed = repair_after_interrupt(conn)
+    if removed:
+        emit(event="warning", message=f"removed {removed} leftover face rows from an interrupted run")
     items = list_photos()
     done = {r["path"]: (r["size"], r["mtime"]) for r in conn.execute("SELECT path,size,mtime FROM seen")}
     todo = [i for i in items if done.get(i[0]) != (i[1], i[2])]
+    del done
     if sample_every:
         todo = todo[::sample_every]
     if limit:
         todo = todo[:limit]
     total = len(todo)
     emit(event="start", total=total, library=len(items))
+    del items
     if not total:
         emit(event="done", processed=0, seconds=0)
         return
     sig = SigLIP(prefer_gpu)
     faces = Faces(prefer_gpu) if use_faces else None
-    n = nfaces = 0
+    n = nfaces = face_failures = 0
     t_inf = 0.0
     batch = []
 
     def flush():
-        nonlocal n, nfaces, t_inf
+        nonlocal n, nfaces, t_inf, face_failures
         ok = []
         for b in batch:
             if "error" in b:
                 continue
-            if conn.execute("SELECT 1 FROM embedding WHERE hash=?", (b["hash"],)).fetchone() or                     any(o["hash"] == b["hash"] for o in ok):
+            if conn.execute("SELECT 1 FROM embedding WHERE hash=?", (b["hash"],)).fetchone() or \
+                    any(o["hash"] == b["hash"] for o in ok):
                 # identical content already indexed (duplicate copy): just remember this path
                 conn.execute("INSERT OR REPLACE INTO seen(path,size,mtime,hash) VALUES (?,?,?,?)",
                              (b["path"], b["size"], b["mtime"], b["hash"]))
@@ -184,26 +278,28 @@ def run(limit=None, use_faces=True, prefer_gpu=True, cancel=None, workers=4, sam
                 ok.append(b)
         for b in batch:
             if "error" in b:
-                conn.execute("INSERT OR REPLACE INTO seen(path,size,mtime,hash) VALUES (?,?,?,NULL)",
-                             (b["path"], b["size"], b["mtime"]))
-                conn.execute("INSERT OR REPLACE INTO photo(hash,path,size,mtime,status,error) VALUES (?,?,?,?,?,?)",
-                             ("err:" + b["path"], b["path"], b["size"], b["mtime"], "error", b["error"]))
+                _record_error(conn, b, b["error"])
         if ok:
             t1 = time.time()
-            x = np.stack([sig.prep(b["img"]) for b in ok])
-            emb = sig.encode_images(x)
-            for b, e in zip(ok, emb):
+            embs = _encode_all(sig, ok)
+            tagged = []
+            for b, e in zip(ok, embs):
+                if isinstance(e, Exception):
+                    _record_error(conn, b, f"embedding failed: {type(e).__name__}: {e}"[:200])
+                    emit(event="warning", message=f"could not embed {b['path']}: {type(e).__name__}")
+                    continue
                 nf = 0
                 if faces:
                     rgb = np.asarray(b["img"])
-                    for box, score, kps in faces.detect(rgb):
-                        if min(box[2] - box[0], box[3] - box[1]) < MIN_FACE:
-                            continue
-                        fe = faces.embed(rgb, kps)
-                        hh, ww = rgb.shape[:2]
+                    found, ferr = _detect_faces(faces, rgb)
+                    if ferr is not None:  # the photo is still indexed for search, just without faces
+                        face_failures += 1
+                        emit(event="warning", message=f"face detection failed for {b['path']}: {type(ferr).__name__}")
+                    hh, ww = rgb.shape[:2]
+                    for box, score, fe in found:
                         cur = conn.execute("INSERT INTO face(hash,x1,y1,x2,y2,score,emb) VALUES (?,?,?,?,?,?,?)",
-                                     (b["hash"], float(box[0] / ww), float(box[1] / hh), float(box[2] / ww), float(box[3] / hh), score,
-                                      store.vec_to_blob(fe, np.float32)))
+                                           (b["hash"], float(box[0] / ww), float(box[1] / hh), float(box[2] / ww),
+                                            float(box[3] / hh), score, store.vec_to_blob(fe, np.float32)))
                         save_face_crop(b["img"], box, cur.lastrowid)
                         nf += 1
                 conn.execute("INSERT OR REPLACE INTO embedding(hash,vec) VALUES (?,?)", (b["hash"], store.vec_to_blob(e)))
@@ -215,8 +311,9 @@ def run(limit=None, use_faces=True, prefer_gpu=True, cancel=None, workers=4, sam
                              (b["path"], b["size"], b["mtime"], b["hash"]))
                 save_thumb(b["img"], b["hash"])
                 nfaces += nf
+                tagged.append((b["hash"], e))
             try:
-                autotag.tag_embeddings(conn, [(b["hash"], e) for b, e in zip(ok, emb)], sig.encode_text)
+                autotag.tag_embeddings(conn, tagged, sig.encode_text)
             except Exception as ex:  # tagging must never break indexing
                 emit(event="warning", message=f"auto-tagging skipped: {ex}")
             t_inf += time.time() - t1
@@ -229,8 +326,9 @@ def run(limit=None, use_faces=True, prefer_gpu=True, cancel=None, workers=4, sam
             b.pop("img", None)
         batch.clear()
 
-    # Bounded read-ahead: decoded 1600 px images are ~7 MB each, so never queue more than a few batches.
-    window = BATCH * 3
+    # Bounded read-ahead: decoded 1600 px images are ~6 MB each, so at most WINDOW queued + BATCH being
+    # processed are alive at once, however large the library is.
+    window = max(WINDOW, workers)
     with ThreadPoolExecutor(workers) as pool:
         pending = collections.deque()
         it = iter(todo)
@@ -248,4 +346,4 @@ def run(limit=None, use_faces=True, prefer_gpu=True, cancel=None, workers=4, sam
                 break
         if batch:
             flush()
-    emit(event="done", processed=n, faces=nfaces, seconds=round(time.time() - t0, 1))
+    emit(event="done", processed=n, faces=nfaces, face_failures=face_failures, seconds=round(time.time() - t0, 1))

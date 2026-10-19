@@ -17,9 +17,14 @@ def providers(prefer_gpu=True):
     return ["CPUExecutionProvider"]
 
 
-def session(path, prefer_gpu=True):
+def session(path, prefer_gpu=True, low_memory=False):
     so = ort.SessionOptions()
     so.log_severity_level = 3
+    if low_memory:
+        # No pooled CPU arena / memory pattern: activations are freed after each run instead of being
+        # kept for the next one, which bounds resident memory over tens of thousands of photos.
+        so.enable_cpu_mem_arena = False
+        so.enable_mem_pattern = False
     prov = providers(prefer_gpu)
     if prov[0] == "DmlExecutionProvider":
         so.enable_mem_pattern = False  # required by DirectML
@@ -91,7 +96,7 @@ class Faces:
     STRIDES = (8, 16, 32)
 
     def __init__(self, prefer_gpu=True, det_thresh=0.5):
-        self.det = session(paths.FACES / "det_10g.onnx", prefer_gpu=False)  # DirectML breaks SCRFD reshapes
+        self.det = session(paths.FACES / "det_10g.onnx", prefer_gpu=False, low_memory=True)  # DirectML breaks SCRFD reshapes
         self.rec = session(paths.FACES / "w600k_r50.onnx", prefer_gpu)
         self.det_name = self.det.get_inputs()[0].name
         self.thresh = det_thresh
@@ -105,13 +110,15 @@ class Faces:
             self._anchors[key] = np.repeat(a, 2, axis=0)
         return self._anchors[key]
 
-    def detect(self, rgb: np.ndarray):
-        """rgb uint8 HxWx3 -> list of (box[4], score, kps[5,2]) in image coords."""
+    def detect(self, rgb: np.ndarray, det_size=None):
+        """rgb uint8 HxWx3 -> list of (box[4], score, kps[5,2]) in image coords. det_size (multiple of 32)
+        overrides the detector input size; the indexer passes a smaller one to retry after a failure."""
         import cv2
+        det = det_size or self.DET
         h, w = rgb.shape[:2]
-        s = self.DET / max(h, w)
+        s = det / max(h, w)
         nh, nw = int(round(h * s)), int(round(w * s))
-        canvas = np.zeros((self.DET, self.DET, 3), np.uint8)
+        canvas = np.zeros((det, det, 3), np.uint8)
         canvas[:nh, :nw] = cv2.resize(rgb, (nw, nh))
         blob = ((canvas.astype(np.float32) - 127.5) / 128.0).transpose(2, 0, 1)[None]
         outs = self.det.run(None, {self.det_name: blob})
@@ -121,7 +128,7 @@ class Faces:
             sc = outs[i].reshape(-1)
             bb = outs[i + n].reshape(-1, 4) * st
             kp = outs[i + 2 * n].reshape(-1, 10) * st
-            anc = self._anchor(st, self.DET // st)
+            anc = self._anchor(st, det // st)
             idx = np.where(sc >= self.thresh)[0]
             if idx.size == 0:
                 continue
