@@ -1,14 +1,16 @@
 """Photo Vault - main window."""
 import os
 import sys
+import threading
+import time
 
-from PySide6.QtCore import QSettings, QSize, Qt
+from PySide6.QtCore import QSettings, QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow, QProgressBar,
+from PySide6.QtWidgets import (QApplication, QMessageBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow, QProgressBar,
                                QPushButton, QStackedWidget, QStatusBar, QVBoxLayout, QWidget)
 
 from . import __version__
-from .core import config, db, quarantine, scanner
+from .core import config, db, quarantine, scanner, updater
 from .ui import theme
 from .ui.common import Tasks, ThumbCache, apply_theme
 from .ui.nav import ICON_ROLE, NavDelegate
@@ -54,6 +56,8 @@ def resource(name):
 
 
 class MainWindow(QMainWindow):
+    updateFound = Signal(object)
+
     def __init__(self, settings):
         super().__init__()
         self.setWindowTitle("Photo Vault")
@@ -107,6 +111,13 @@ class MainWindow(QMainWindow):
             it.setData(ICON_ROLE, PAGE_ICONS.get(cls))
             self.nav.addItem(it)
         sl.addWidget(self.nav, 1)
+        self.update_btn = QPushButton()
+        self.update_btn.setCursor(Qt.PointingHandCursor)
+        self.update_btn.hide()
+        self.update_btn.clicked.connect(self.start_update)
+        sl.addWidget(self.update_btn)
+        self.release = None
+        self.updateFound.connect(self._show_update)
         self.about_btn = QPushButton("About Photo Vault")
         self.about_btn.setObjectName("flat")
         self.about_btn.setCursor(Qt.PointingHandCursor)
@@ -129,6 +140,7 @@ class MainWindow(QMainWindow):
         self._shortcut("Ctrl+0", lambda: self.set_zoom(1.0))
         self._shortcut("F1", self.open_help)
         self.relayout()
+        self.check_for_update()
 
         # Keep the library index fresh: quick incremental scan on every start.
         self.ctx.tasks.run("Scanning library",
@@ -193,6 +205,60 @@ class MainWindow(QMainWindow):
             if cls is HelpPage:
                 self.nav.setCurrentRow(i)
                 return
+
+    def check_for_update(self, force=False):
+        """Look for a newer GitHub release in a background thread (at most daily unless forced; offline = silent)."""
+        s = self.ctx.settings
+        if not force and (not s.check_updates or time.time() - s.last_update_check < 86400):
+            return
+
+        def work():
+            rel = updater.check(__version__)
+            s.last_update_check = time.time()
+            s.save()
+            self.updateFound.emit(rel)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_update(self, rel):
+        self.release = rel
+        if rel:
+            self.update_btn.setText(f"Update to {rel.tag} available")
+            self.update_btn.show()
+        else:
+            self.update_btn.hide()
+
+    def start_update(self):
+        rel = self.release
+        if not rel:
+            return
+        notes = (rel.notes or "").strip()[:1500]
+        box = QMessageBox(self)
+        box.setWindowTitle("Update Photo Vault")
+        box.setText(f"Update from v{__version__} to {rel.tag}?")
+        box.setInformativeText(notes + "\n\nYour photos, settings and index are not touched. Photo Vault will restart.")
+        go = box.addButton("Update now", QMessageBox.AcceptRole)
+        box.addButton("Later", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is not go:
+            return
+        if not updater.install_dir():
+            import webbrowser
+            webbrowser.open(rel.page)  # running from source: nothing to swap
+            return
+        tmp = os.path.join(os.environ.get("TEMP", "."), "PhotoVault-update")
+        self.ctx.tasks.run("Downloading update",
+                           lambda c, prog, cancel: updater.download_and_verify(
+                               rel, tmp, lambda d, t: prog(d, t, "Downloading update"), cancel),
+                           self._apply_update, on_fail=lambda e: QMessageBox.warning(self, "Update failed", str(e)),
+                           parent=self)
+
+    def _apply_update(self, zip_path):
+        try:
+            updater.apply_update(zip_path)
+        except Exception as e:
+            QMessageBox.warning(self, "Update failed", str(e))
+            return
+        QApplication.quit()
 
     def show_about(self):
         AboutDialog(self).exec()

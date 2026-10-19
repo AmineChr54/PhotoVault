@@ -1,6 +1,7 @@
 # Builds dist\PhotoVault\PhotoVault.exe and puts a "Photo Vault" shortcut on the Desktop.
 # (No $ErrorActionPreference=Stop: PyInstaller logs to stderr, which PowerShell 5.1 would treat as an error.
 #  Failures are detected through $LASTEXITCODE instead.)
+param([string]$InstallDir = "")  # optional: also mirror the build into this folder and point the shortcut there
 Set-Location $PSScriptRoot
 
 python -m pytest -q -p no:cacheprovider tests
@@ -12,6 +13,15 @@ python -m PyInstaller --noconfirm --clean --windowed --name PhotoVault --icon ic
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 
 $exe = Join-Path $PSScriptRoot "dist\PhotoVault\PhotoVault.exe"
+if ($InstallDir) {
+    if (Get-Process PhotoVault -ErrorAction SilentlyContinue) { throw "Close Photo Vault first." }
+    $old = "$InstallDir.old"
+    if (Test-Path $old) { Remove-Item $old -Recurse -Force }
+    if (Test-Path $InstallDir) { Move-Item $InstallDir $old }
+    New-Item -ItemType Directory (Split-Path $InstallDir) -Force | Out-Null
+    Copy-Item (Join-Path $PSScriptRoot "dist\PhotoVault") $InstallDir -Recurse
+    $exe = Join-Path $InstallDir "PhotoVault.exe"
+}
 $desktop = [Environment]::GetFolderPath("Desktop")
 $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $desktop "Photo Vault.lnk"))
 $lnk.TargetPath = $exe

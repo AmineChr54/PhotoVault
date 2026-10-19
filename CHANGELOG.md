@@ -4,6 +4,7 @@ All notable changes. Format: Added / Changed / Fixed. Versions follow semver; ta
 
 ## Unreleased
 ### Added
+- Update check and one-click update (#8): the app checks GitHub Releases at most once a day (Settings > Updates turns it off) and shows an "Update to vX available" button; Update now downloads the release zip, verifies its SHA-256, restarts the app and swaps the install folder (old copy kept until the new one starts, rolled back on failure). Photos, settings and the index are never touched. Release builds now publish a `.sha256` next to the zip; `build.ps1 -InstallDir` and the `/update-local` skill install a local build.
 - In-app Help page (#28): the user guide and a What's new section render inside the app (sidebar > Help, or F1 anywhere). New About dialog (sidebar footer or Help page) with version, GitHub link, privacy note and AI model credits (including InsightFace's non-commercial licence). The first-run notice links to Help. The guide and changelog are bundled into the exe.
 
 ### Changed

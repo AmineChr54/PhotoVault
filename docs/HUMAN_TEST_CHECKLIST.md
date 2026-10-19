@@ -3,6 +3,7 @@
 Things the AI cannot verify. Tick only after trying it yourself on a real machine. `/release-checklist` adds per-release sections above the standing list.
 
 ## Standing checks
+- [ ] Updater: install release N from the zip, publish N+1, the sidebar button appears, Update now restarts into N+1 with settings and library intact; a corrupted zip is refused; a failed swap (install folder read-only) leaves the old version working
 - [ ] Scan a real library (10k+ photos, mixed formats, network/external drive) - speed, no freezes, counts look right
 - [ ] Duplicates: review exact + similar groups on real photos; quarantine; restore via Activity log undo
 - [ ] Organize: preview then apply on a copy of a library; undo restores every file to its original path

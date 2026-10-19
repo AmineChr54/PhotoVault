@@ -116,3 +116,6 @@ Make everything bigger or smaller with the keyboard, on any page: **Ctrl+=** (or
 
 ## Help and About
 Open **Help** in the sidebar (or press **F1** on any page) to read this guide inside the app; it also shows *What's new*. It follows the theme and zoom. **About Photo Vault** (sidebar footer, or the button on the Help page) shows the version, the project link and the credits for the optional AI models.
+
+## Updates
+Photo Vault checks GitHub Releases at most once a day (one request, no telemetry; turn it off in Settings > Updates). When a newer version exists, an **Update to vX available** button appears above *About* in the sidebar. **Update now** downloads the release, verifies its SHA-256, restarts the app and swaps the program folder; your photos, settings and index are not touched, and the old copy is restored automatically if anything fails. Running from source only opens the release page.
