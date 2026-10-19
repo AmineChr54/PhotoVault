@@ -4,6 +4,7 @@ Logic lives here (not in store.py). Auto rows go through store.add_photo_tag, wh
 manual tag or a manual rejection. Stale auto rows for a photo are replaced on re-tagging.
 """
 import base64
+import json
 
 import numpy as np
 
@@ -14,13 +15,41 @@ def _meta_key():
     return f"tag_text_vecs_v{vocab.VOCAB_VERSION}"
 
 
+THRESHOLDS_KEY = "tag_thresholds"  # meta row: JSON {label: cosine threshold} written by calibration
+
+
+def calibrated_thresholds(conn) -> dict:
+    """Per-label thresholds saved by `benchmark.calibrate`; {} if never calibrated or unreadable."""
+    row = conn.execute("SELECT value FROM meta WHERE key=?", (THRESHOLDS_KEY,)).fetchone()
+    if not row:
+        return {}
+    try:
+        d = json.loads(row["value"])
+        return {str(k): float(v) for k, v in d.items()}
+    except (ValueError, TypeError, AttributeError):
+        return {}
+
+
+def save_calibrated_thresholds(conn, thresholds: dict):
+    """Replace the calibrated thresholds (an empty dict resets to the vocab defaults)."""
+    if not thresholds:
+        conn.execute("DELETE FROM meta WHERE key=?", (THRESHOLDS_KEY,))
+    else:
+        conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)",
+                     (THRESHOLDS_KEY, json.dumps({k: round(float(v), 5) for k, v in sorted(thresholds.items())})))
+    conn.commit()
+
+
 def label_vectors(conn, encode_text=None):
     """(labels, thresholds, matrix[n, d]) with L2-normalised rows. Text vectors are computed once via
-    encode_text(list[str]) -> array and cached in the meta table; with a warm cache no model is needed."""
+    encode_text(list[str]) -> array and cached in the meta table; with a warm cache no model is needed.
+    Threshold precedence: calibrated value > vocab override > vocab.DEFAULT_THRESHOLD."""
     key = _meta_key()
     row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
     labels = [v[0] for v in vocab.VOCAB]
-    thr = np.array([vocab.DEFAULT_THRESHOLD if v[2] is None else v[2] for v in vocab.VOCAB], np.float32)
+    cal = calibrated_thresholds(conn)
+    thr = np.array([cal[v[0]] if v[0] in cal else (vocab.DEFAULT_THRESHOLD if v[2] is None else v[2])
+                    for v in vocab.VOCAB], np.float32)
     if row:
         m = np.frombuffer(base64.b64decode(row["value"]), np.float32)
         if m.size % len(labels) == 0:

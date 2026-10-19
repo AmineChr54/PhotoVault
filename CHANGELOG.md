@@ -4,6 +4,7 @@ All notable changes. Format: Added / Changed / Fixed. Versions follow semver; ta
 
 ## Unreleased
 ### Added
+- AI quality benchmark and per-label tag calibration (#10): `python -m photovault.ai.worker benchmark LABELS.json` reports search recall@k, tag precision/recall and face-pair accuracy from a small hand-labelled JSON file (template: `docs/ai_benchmark_labels.example.json`); `calibrate LABELS.json` learns one cosine threshold per tag label (replacing the global 0.10 guess for labels with enough examples), stores it in the AI index and applies it on the next `retag`/indexing; `calibrate --reset` goes back to the defaults.
 - In-app Help page (#28): the user guide and a What's new section render inside the app (sidebar > Help, or F1 anywhere). New About dialog (sidebar footer or Help page) with version, GitHub link, privacy note and AI model credits (including InsightFace's non-commercial licence). The first-run notice links to Help. The guide and changelog are bundled into the exe.
 
 ### Changed

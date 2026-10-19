@@ -1,0 +1,15 @@
+{
+  "root": "C:/Users/you/Pictures",
+  "search": [
+    {"query": "a dog running on the beach", "expected": ["2023/07/IMG_0412.jpg", "2023/07/IMG_0415.jpg"]},
+    {"query": "birthday cake with candles", "expected": ["2022/03/IMG_1001.jpg"]}
+  ],
+  "tags": [
+    {"photo": "2023/07/IMG_0412.jpg", "present": ["dog", "beach"], "absent": ["cat", "snow"]},
+    {"photo": "2022/03/IMG_1001.jpg", "present": ["cake", "birthday"], "absent": ["dog"]}
+  ],
+  "faces": [
+    {"photos": ["2021/05/IMG_2001.jpg", "2022/08/IMG_3333.jpg"], "same": true},
+    {"photos": ["2021/05/IMG_2001.jpg", "2022/08/IMG_4444.jpg"], "same": false}
+  ]
+}
