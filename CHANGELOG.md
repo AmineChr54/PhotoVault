@@ -15,6 +15,7 @@ All notable changes. Format: Added / Changed / Fixed. Versions follow semver; ta
 - Added docs/USER_GUIDE.md (linked from the README).
 
 ### Fixed
+- AI indexer (#11): a killed or crashed run now resumes cleanly, and memory stays bounded on large libraries. Index rows are committed one batch at a time and the database connection is always closed; thumbnails and face crops are written atomically (no truncated files after a kill); leftover face rows from an interrupted run are cleaned up on the next start. A photo whose face detection or embedding fails (e.g. out of memory) is retried at a smaller detector size or skipped on its own instead of aborting the whole run. Fewer decoded images are kept in flight (32 + 16 instead of 48 + 16) and the face detector no longer hoards memory between photos. The `done` event now also reports `face_failures`.
 - "Enable AI features" did nothing when clicked (#1); it now starts the AI setup, and a start failure is shown instead of leaving the button stuck.
 - AI Index page crashed on open when the AI environment was already set up (#35).
 - CI: UI smoke no longer hangs headless (Search page shows an inline "AI not set up" message instead of a modal dialog).

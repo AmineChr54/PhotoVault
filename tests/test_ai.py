@@ -1,6 +1,7 @@
 """Tests for photovault/ai using synthetic embeddings and fakes: no models, network, GPU or real library."""
 import importlib
 import json
+import sqlite3
 import sys
 import threading
 import types
@@ -357,7 +358,7 @@ class FakeFaces:
     def __init__(self, prefer_gpu=True):
         pass
 
-    def detect(self, rgb):
+    def detect(self, rgb, det_size=None):
         h, w = rgb.shape[:2]
         return [((2, 2, w - 2, h - 2), 0.95, None), ((0, 0, 5, 5), 0.9, None)]  # 2nd is below MIN_FACE
 
@@ -426,6 +427,249 @@ def test_run_leaves_originals_untouched(sandbox, capsys):
     before = {p: p.read_bytes() for p in sandbox.rglob("*.jpg")}
     run_index(capsys)
     assert {p: p.read_bytes() for p in sandbox.rglob("*.jpg")} == before
+
+
+# ---- resume after a killed run, failure isolation, bounded memory (#11) ----
+class Killed(BaseException):
+    """Stands in for the process being killed: not an Exception, so no `except Exception` can swallow it."""
+
+
+def many_photos(lib, n):
+    for i in range(n):
+        make_img(lib / "B" / f"p{i:02d}.jpg", ((i * 37) % 256, (i * 91) % 256, (i * 5) % 256), size=(64 + i, 48))
+
+
+def db_snapshot():
+    c = store.connect()
+    try:
+        return {
+            "stats": store.stats(c),
+            "seen": c.execute("SELECT COUNT(*) FROM seen").fetchone()[0],
+            "orphan_faces": c.execute(
+                "SELECT COUNT(*) FROM face WHERE hash NOT IN (SELECT hash FROM embedding)").fetchone()[0],
+            "photo_rows": c.execute("SELECT COUNT(*) FROM photo").fetchone()[0],
+        }
+    finally:
+        c.close()
+
+
+def test_killed_run_resumes_and_matches_uninterrupted(sandbox, capsys, monkeypatch):
+    many_photos(sandbox, 9)
+    monkeypatch.setattr(indexer, "BATCH", 3)
+    run_index(capsys)
+    expected = db_snapshot()
+    thumbs = sorted(p.name for p in paths.THUMBS.glob("*.jpg"))
+    for f in (paths.AI_DB, *paths.AI_DB.parent.glob("ai.db-*")):
+        f.unlink()                                      # fresh index, same library
+    for d in (paths.THUMBS, paths.FACE_CROPS):
+        for f in d.glob("*"):
+            f.unlink()
+
+    calls = []
+
+    class DiesOnThirdBatch(FakeSigLIP):
+        def encode_images(self, x):
+            calls.append(1)
+            if len(calls) == 3:
+                raise Killed()
+            return super().encode_images(x)
+
+    fake = sys.modules["photovault.ai.models"]
+    monkeypatch.setattr(fake, "SigLIP", DiesOnThirdBatch)
+    capsys.readouterr()
+    with pytest.raises(Killed):
+        indexer.run(workers=2)
+    out = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    assert not any(e["event"] == "done" for e in out)   # no `done` event, like a real kill
+    mid = db_snapshot()
+    assert mid["orphan_faces"] == 0 and mid["seen"] < expected["seen"]
+    assert mid["stats"]["embedded"] == mid["stats"]["photos"] > 0   # only whole batches were committed
+
+    monkeypatch.setattr(fake, "SigLIP", FakeSigLIP)
+    ev = run_index(capsys)                                # resume
+    start = next(e for e in ev if e["event"] == "start")
+    assert 0 < start["total"] < expected["seen"] and ev[-1]["event"] == "done"
+    assert db_snapshot() == expected                      # identical to a run that was never interrupted
+    assert sorted(p.name for p in paths.THUMBS.glob("*.jpg")) == thumbs
+    assert [e["event"] for e in run_index(capsys)] == ["listing", "start", "done"]
+
+
+def test_run_closes_connection_so_a_crash_does_not_lock_the_db(sandbox, capsys, monkeypatch):
+    class Boom(FakeSigLIP):
+        def encode_images(self, x):
+            raise Killed()
+
+    monkeypatch.setattr(sys.modules["photovault.ai.models"], "SigLIP", Boom)
+    with pytest.raises(Killed):
+        indexer.run(workers=2)
+    c = sqlite3.connect(paths.AI_DB, timeout=0.2)         # would raise "database is locked" if run() leaked its txn
+    c.execute("CREATE TABLE IF NOT EXISTS probe(x)")
+    c.execute("INSERT INTO probe VALUES (1)")
+    c.commit()
+    c.close()
+    capsys.readouterr()
+
+
+def test_repair_removes_orphan_faces_and_temp_files(sandbox):
+    c = store.connect()
+    c.execute("INSERT INTO face(hash,x1,y1,x2,y2,score,emb) VALUES ('ghost',0,0,1,1,.9,?)",
+              (store.vec_to_blob(np.ones(512), np.float32),))
+    fid = c.execute("SELECT id FROM face").fetchone()[0]
+    c.execute("INSERT INTO embedding(hash,vec) VALUES ('real',?)", (store.vec_to_blob(np.ones(8)),))
+    c.execute("INSERT INTO face(hash,x1,y1,x2,y2,score,emb) VALUES ('real',0,0,1,1,.9,?)",
+              (store.vec_to_blob(np.ones(512), np.float32),))
+    c.commit()
+    paths.FACE_CROPS.mkdir(parents=True, exist_ok=True)
+    (paths.FACE_CROPS / f"{fid}.jpg").write_bytes(b"x")
+    (paths.FACE_CROPS / "9.jpg.tmp").write_bytes(b"half")
+    paths.THUMBS.mkdir(parents=True, exist_ok=True)
+    (paths.THUMBS / "h.jpg.tmp").write_bytes(b"half")
+    assert indexer.repair_after_interrupt(c) == 1
+    assert [r["hash"] for r in c.execute("SELECT hash FROM face")] == ["real"]
+    assert not list(paths.FACE_CROPS.glob("*")) and not list(paths.THUMBS.glob("*"))
+    c.close()
+
+
+def test_interrupted_image_write_leaves_no_truncated_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "THUMBS", tmp_path / "thumbs")
+    img = Image.new("RGB", (400, 300), (9, 9, 9))
+    real_save = Image.Image.save
+
+    def dying_save(self, fp, *a, **kw):
+        real_save(self, fp, *a, **kw)
+        with open(fp, "r+b") as f:
+            f.truncate(10)                              # half-written file, then "killed"
+        raise Killed()
+
+    monkeypatch.setattr(Image.Image, "save", dying_save)
+    with pytest.raises(Killed):
+        indexer.save_thumb(img, "abc")
+    monkeypatch.setattr(Image.Image, "save", real_save)
+    assert not (tmp_path / "thumbs" / "abc.jpg").exists() and not list((tmp_path / "thumbs").glob("*.tmp"))
+    (tmp_path / "thumbs" / "zero.jpg").write_bytes(b"")  # leftover from an older killed run
+    indexer.save_thumb(img, "zero")
+    assert Image.open(tmp_path / "thumbs" / "zero.jpg").size[0] > 0
+
+
+def test_detector_failure_retries_smaller_then_still_indexes_photo(sandbox, capsys, monkeypatch):
+    sizes = []
+
+    class Flaky(FakeFaces):
+        def detect(self, rgb, det_size=None):
+            sizes.append(det_size)
+            if det_size is None:
+                raise MemoryError("detector out of memory")
+            return super().detect(rgb)
+
+    monkeypatch.setattr(sys.modules["photovault.ai.models"], "Faces", Flaky)
+    ev = run_index(capsys)
+    assert ev[-1]["event"] == "done" and ev[-1]["face_failures"] == 0
+    assert set(sizes) == {None, indexer.FALLBACK_DET}
+    c = store.connect()
+    assert store.stats(c)["faces"] == 2 and store.stats(c)["embedded"] == 2   # retry produced the faces
+    c.close()
+
+
+def test_detector_failing_twice_keeps_photo_without_faces(sandbox, capsys, monkeypatch):
+    class Broken(FakeFaces):
+        def detect(self, rgb, det_size=None):
+            raise MemoryError("nope")
+
+    monkeypatch.setattr(sys.modules["photovault.ai.models"], "Faces", Broken)
+    ev = run_index(capsys)
+    assert ev[-1]["event"] == "done" and ev[-1]["face_failures"] == 2
+    assert sum(e["event"] == "warning" and "face detection" in e["message"] for e in ev) == 2
+    c = store.connect()
+    st = store.stats(c)
+    assert st["embedded"] == 2 and st["faces"] == 0 and st["errors"] == 1   # still searchable; only broken.jpg errors
+    c.close()
+    assert [e["event"] for e in run_index(capsys)] == ["listing", "start", "done"]   # not retried forever
+
+
+def test_one_unembeddable_photo_costs_only_itself(sandbox, capsys, monkeypatch):
+    class PickyBatch(FakeSigLIP):
+        def encode_images(self, x):
+            if len(x) > 1:
+                raise MemoryError("batch too big")
+            if x[0][0] > x[0][1] and x[0][0] > 100:   # the red photo
+                raise MemoryError("red is bad")
+            return super().encode_images(x)
+
+    monkeypatch.setattr(sys.modules["photovault.ai.models"], "SigLIP", PickyBatch)
+    ev = run_index(capsys)
+    assert ev[-1]["event"] == "done"
+    c = store.connect()
+    err = c.execute("SELECT path, error FROM photo WHERE status='error' AND error LIKE 'embedding failed%'").fetchall()
+    assert len(err) == 1 and err[0]["path"].endswith(("red.jpg", "dup.jpg"))   # identical copies: whichever came first
+    assert store.stats(c)["embedded"] == 1                  # green made it
+    c.close()
+
+
+def test_memory_stays_bounded_by_window_not_library_size(sandbox, capsys, monkeypatch):
+    """Decoded images alive at once never exceed WINDOW + BATCH, whatever the library size."""
+    import gc
+    import weakref
+    many_photos(sandbox, 60)
+    monkeypatch.setattr(indexer, "BATCH", 4)
+    monkeypatch.setattr(indexer, "WINDOW", 8)
+    live = []
+    peak = [0]
+    real_load = indexer.load_one
+
+    def tracking_load(item):
+        r = real_load(item)
+        if "img" in r:
+            live.append(weakref.ref(r["img"]))
+        return r
+
+    class Probe(FakeSigLIP):
+        def encode_images(self, x):
+            gc.collect()
+            peak[0] = max(peak[0], sum(1 for w in live if w() is not None))
+            return super().encode_images(x)
+
+    monkeypatch.setattr(indexer, "load_one", tracking_load)
+    monkeypatch.setattr(sys.modules["photovault.ai.models"], "SigLIP", Probe)
+    ev = run_index(capsys, use_faces=False)
+    assert ev[-1]["event"] == "done" and ev[-1]["processed"] >= 60
+    assert 0 < peak[0] <= indexer.WINDOW + indexer.BATCH + 2     # +2: the loop's own references
+
+
+def test_default_window_is_small_enough_for_large_libraries():
+    # ~6 MB per decoded 1600 px image: the in-flight cap must stay well below half a gigabyte
+    assert (indexer.WINDOW + indexer.BATCH) * 1600 * 1200 * 3 < 400 * 2**20
+
+
+def test_faces_detect_size_override_and_low_memory_session(monkeypatch):
+    models = pytest.importorskip("photovault.ai.models")
+    pytest.importorskip("cv2")
+    seen = []
+
+    class StubDet:
+        def run(self, _out, feed):
+            blob = next(iter(feed.values()))
+            seen.append(blob.shape)
+            n = blob.shape[-1]
+            outs = []
+            for width in (1, 4, 10):
+                for st in models.Faces.STRIDES:
+                    outs.append(np.zeros(((n // st) ** 2 * 2, width), np.float32))
+            return outs
+
+    f = models.Faces.__new__(models.Faces)
+    f.det, f.det_name, f.thresh, f._anchors = StubDet(), "input", 0.5, {}
+    img = np.zeros((300, 400, 3), np.uint8)
+    assert f.detect(img) == [] and f.detect(img, det_size=640) == []
+    assert seen == [(1, 3, models.Faces.DET, models.Faces.DET), (1, 3, 640, 640)]
+    captured = {}
+
+    class Opts:
+        pass
+
+    monkeypatch.setattr(models.ort, "SessionOptions", Opts)
+    monkeypatch.setattr(models.ort, "InferenceSession", lambda path, so, providers: captured.update(so=so))
+    models.session("x.onnx", prefer_gpu=False, low_memory=True)
+    assert captured["so"].enable_cpu_mem_arena is False
 
 
 # ---------- worker CLI / client ----------
