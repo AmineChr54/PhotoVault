@@ -167,7 +167,7 @@ class DashboardPage(Page):
 
 # =================================================================== Duplicates
 class FileCard(QFrame):
-    def __init__(self, row, thumbs, keep_group: QButtonGroup, idx: int):
+    def __init__(self, row, thumbs, keep_group: QButtonGroup, idx: int, hint: str = ""):
         super().__init__()
         self.setObjectName("card")
         self.setFixedWidth(px(250))
@@ -192,6 +192,11 @@ class FileCard(QFrame):
         txt.setWordWrap(True)
         txt.setTextFormat(Qt.RichText)
         lay.addWidget(txt)
+        if hint:
+            note = QLabel(hint)
+            note.setObjectName("pageSub")
+            note.setWordWrap(True)
+            lay.addWidget(note)
         b = button("Show in folder")
         b.clicked.connect(lambda: show_in_explorer(self.path))
         lay.addWidget(b)
@@ -257,7 +262,7 @@ class GroupView(QWidget):
         self.ignore_btn = button("Not duplicates - ignore this group")
         self.ignore_btn.clicked.connect(self.ignore_current)
         hint = QLabel("Exact copies are byte-for-byte identical - removing extras loses nothing." if not similar else
-                      "Similar = same picture in another size/quality (e.g. WhatsApp copy). Check before removing.")
+                      "Similar = same picture in another size/quality (e.g. WhatsApp copy) or a burst. The suggested keeper has the highest resolution, then sharpness. Check before removing.")
         hint.setObjectName("pageSub")
         hint.setWordWrap(True)
         rl.addLayout(hrow(self.q_btn, self.ignore_btn, hint))
@@ -318,12 +323,20 @@ class GroupView(QWidget):
         g = self.shown[idx]
         self.keep_group = QButtonGroup(self)
         for i, f in enumerate(g["files"]):
-            card = FileCard(f, self.ctx.thumbs, self.keep_group, i)
+            card = FileCard(f, self.ctx.thumbs, self.keep_group, i, self._quality_hint(g, i))
             self.cards_lay.addWidget(card)
             self.cards.append(card)
         self.keep_group.button(g["keep"]).setChecked(True)
         self.keep_group.idClicked.connect(lambda i: g.__setitem__("keep", i))
         self._set_group_buttons(True)
+
+    def _quality_hint(self, g, i):
+        sharp = g.get("sharpness")
+        if not self.similar or not sharp or sharp[i] is None:
+            return ""
+        best = max(s or 0 for s in sharp)
+        txt = f"Sharpness {sharp[i]:,.0f}" + (" (sharpest)" if sharp[i] == best and len(sharp) > 1 else "")
+        return txt + (" · suggested keeper" if i == 0 else "")
 
     def _thumb_ready(self, path):
         for c in self.cards:

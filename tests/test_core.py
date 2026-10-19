@@ -33,7 +33,9 @@ def write(path, data=b"x"):
 
 
 @pytest.fixture
-def env(tmp_path):
+def env(tmp_path, monkeypatch):
+    from photovault.ai import paths as ai_paths
+    monkeypatch.setattr(ai_paths, "AI_DB", tmp_path / "no_ai" / "ai.db")  # never read the developer's real ai.db
     lib = tmp_path / "Library"
     org = tmp_path / "Photos"
     s = config.Settings(library_roots=[str(lib), str(org)], organized_root=str(org),
@@ -141,6 +143,89 @@ def test_similar_photos(env):
     groups = dupes.similar_groups(conn, s)
     assert len(groups) == 1
     assert groups[0]["files"][0]["name"] == "big.jpg"  # highest resolution suggested as keeper
+
+
+def _burst_pair(lib):
+    """Two same-size shots of one scene: a sharp one and a blurred one (dHash-close)."""
+    from PIL import ImageFilter
+    make_jpg(str(lib / "Cam" / "a_sharp.jpg"), size=(800, 600), pattern=True)
+    with Image.open(lib / "Cam" / "a_sharp.jpg") as im:
+        im.filter(ImageFilter.GaussianBlur(3)).save(lib / "Cam" / "a_blurry.jpg", quality=90)
+    return str(lib / "Cam" / "a_sharp.jpg"), str(lib / "Cam" / "a_blurry.jpg")
+
+
+def _fake_ai_db(path, entries):
+    """entries: (file path, vector, taken_ts). Builds a minimal real ai.db with float16 embeddings."""
+    from photovault.ai import store
+    ai = store.connect(path)
+    for i, (fp, vec, ts) in enumerate(entries):
+        h = f"h{i}"
+        ai.execute("INSERT INTO photo(hash,path,taken_ts) VALUES (?,?,?)", (h, fp, ts))
+        ai.execute("INSERT INTO embedding(hash,vec) VALUES (?,?)", (h, struct.pack(f"<{len(vec)}e", *vec)))
+    ai.commit()
+    ai.close()
+    return path
+
+
+def test_sharpness_orders_and_handles_unreadable(env):
+    s, conn, lib, org, tmp = env
+    sharp, blurry = _burst_pair(lib)
+    assert hashing_sharp(sharp) > hashing_sharp(blurry) > 0
+    write(str(lib / "Cam" / "broken.jpg"), b"not an image")
+    assert hashing_sharp(str(lib / "Cam" / "broken.jpg")) is None
+
+
+def hashing_sharp(path):
+    from photovault.core import hashing
+    return hashing.sharpness(path)
+
+
+def test_similar_burst_suggests_sharpest_keeper(env):
+    s, conn, lib, org, tmp = env
+    sharp, blurry = _burst_pair(lib)
+    scanner.scan(s, conn=conn)
+    (g,) = dupes.similar_groups(conn, s)
+    assert g["files"][0]["path"] == sharp and g["keep"] == 0  # same resolution -> sharpness decides
+    assert g["sharpness"][0] > g["sharpness"][1]
+
+
+def test_similar_embeddings_split_false_match(env):
+    s, conn, lib, org, tmp = env
+    sharp, blurry = _burst_pair(lib)
+    scanner.scan(s, conn=conn)
+    assert len(dupes.similar_groups(conn, s)) == 1   # no ai.db: dHash alone groups them
+    far = _fake_ai_db(tmp / "ai1.db", [(sharp, [1.0, 0.0, 0.0], 1000.0), (blurry, [0.0, 1.0, 0.0], 1001.0)])
+    assert dupes.similar_groups(conn, s, ai_db=far) == []   # embeddings say different scenes
+    near = _fake_ai_db(tmp / "ai2.db", [(sharp, [1.0, 0.1, 0.0], 1000.0), (blurry, [1.0, 0.0, 0.0], 1001.0)])
+    assert len(dupes.similar_groups(conn, s, ai_db=near)) == 1
+    only_one = _fake_ai_db(tmp / "ai3.db", [(sharp, [1.0, 0.0, 0.0], 1000.0)])
+    assert len(dupes.similar_groups(conn, s, ai_db=only_one)) == 1   # missing embedding -> dHash verdict stands
+
+
+def test_similar_embeddings_merge_edited_version(env):
+    s, conn, lib, org, tmp = env
+    make_jpg(str(lib / "Cam" / "orig.jpg"), size=(800, 600), pattern=True)
+    with Image.open(lib / "Cam" / "orig.jpg") as im:   # an inverted "edit": far apart in dHash
+        from PIL import ImageOps
+        ImageOps.invert(im.convert("RGB")).transpose(Image.Transpose.FLIP_LEFT_RIGHT).save(lib / "Cam" / "edit.jpg")
+    scanner.scan(s, conn=conn)
+    orig, edit = str(lib / "Cam" / "orig.jpg"), str(lib / "Cam" / "edit.jpg")
+    assert dupes.similar_groups(conn, s) == []
+    ai = _fake_ai_db(tmp / "ai.db", [(orig, [1.0, 0.0], 1000.0), (edit, [1.0, 0.05], 1100.0)])
+    (g,) = dupes.similar_groups(conn, s, ai_db=ai)
+    assert {f["path"] for f in g["files"]} == {orig, edit}
+    late = _fake_ai_db(tmp / "ai_late.db", [(orig, [1.0, 0.0], 1000.0), (edit, [1.0, 0.05], 1000.0 + 86400)])
+    assert dupes.similar_groups(conn, s, ai_db=late) == []   # same look but days apart: not merged
+
+
+def test_similar_ignores_unusable_ai_db(env):
+    s, conn, lib, org, tmp = env
+    _burst_pair(lib)
+    scanner.scan(s, conn=conn)
+    bad = tmp / "bad.db"
+    bad.write_bytes(b"this is not a sqlite database at all")
+    assert len(dupes.similar_groups(conn, s, ai_db=bad)) == 1
+    assert len(dupes.similar_groups(conn, s, ai_db=tmp / "missing.db")) == 1
 
 
 # ---------- organize ----------

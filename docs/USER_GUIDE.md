@@ -34,6 +34,9 @@ Two tabs. **Exact copies**: click **Find exact duplicates**. **Similar photos**:
 are preferred automatically), then **Move the other copies to quarantine**. **Show in folder** opens a file in
 Explorer. **Not duplicates - ignore this group** hides a group for good. **Quarantine extras in ALL shown
 groups...** does it for every group under the current *Folder:* filter, after a confirmation.
+In **Similar photos** the first card is the suggested keeper: highest resolution, then the sharpest (each card shows
+its sharpness, so you can pick the best shot of a burst). If you have built the AI index, its image embeddings also
+remove false matches and add edited versions taken at about the same time; without AI, hashes and sharpness are used.
 
 ## Organize
 Sorts everything under the organized folder (Life\Year\Year-Month, Chat Media, Screenshots, Gaming, Projects,

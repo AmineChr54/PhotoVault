@@ -4,6 +4,7 @@ All notable changes. Format: Added / Changed / Fixed. Versions follow semver; ta
 
 ## Unreleased
 ### Added
+- Smarter similar photos (#5): each photo in a Similar group shows a sharpness score (Laplacian variance, no model needed) and the suggested keeper is the highest resolution, then the sharpest, so the best shot of a burst is pre-selected. If an AI index exists, its image embeddings (read-only) drop dHash matches that look different and add near-identical edits taken within 10 minutes; thresholds are first guesses. Without AI nothing changes except the sharpness hint.
 - In-app Help page (#28): the user guide and a What's new section render inside the app (sidebar > Help, or F1 anywhere). New About dialog (sidebar footer or Help page) with version, GitHub link, privacy note and AI model credits (including InsightFace's non-commercial licence). The first-run notice links to Help. The guide and changelog are bundled into the exe.
 
 ### Changed

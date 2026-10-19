@@ -1,6 +1,6 @@
-"""File content hashes (xxh3-128) and perceptual image hashes (dHash)."""
+"""File content hashes (xxh3-128), perceptual image hashes (dHash) and a sharpness measure."""
 import xxhash
-from PIL import Image
+from PIL import Image, ImageFilter, ImageStat
 
 CHUNK = 1 << 20
 EDGE = 65536
@@ -44,6 +44,23 @@ def dhash(path: str) -> str | None:
         for col in range(8):
             bits = (bits << 1) | (px[row * 9 + col] > px[row * 9 + col + 1])
     return f"{bits:016x}"
+
+
+_LAPLACIAN = ImageFilter.Kernel((3, 3), (0, 1, 0, 1, -4, 1, 0, 1, 0), scale=1, offset=128)
+SHARP_EDGE = 512
+
+
+def sharpness(path: str) -> float | None:
+    """Variance of the Laplacian on a copy scaled to fit 512 px, so photos of different sizes are comparable.
+    Higher = sharper. No model needed (Pillow only). None if the image can't be read."""
+    try:
+        with Image.open(path) as img:
+            img.draft("L", (SHARP_EDGE * 2, SHARP_EDGE * 2))
+            g = img.convert("L")
+        g.thumbnail((SHARP_EDGE, SHARP_EDGE), Image.Resampling.BOX)
+        return round(ImageStat.Stat(g.filter(_LAPLACIAN)).var[0], 1)
+    except Exception:
+        return None
 
 
 def copy_with_hash(src: str, dst: str, cancel=None) -> str:
