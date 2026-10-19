@@ -371,3 +371,69 @@ def test_default_layout_scan_skips_quarantine(tmp_path):
     s = config.Settings(library_roots=[str(pics)], organized_root=str(pics / "Photos"),
                         quarantine_dir=str(pics / "_Duplicates_To_Review"))
     assert [os.path.basename(p) for p, _, _ in scanner.walk_roots(s)] == ["a.jpg"]
+
+
+# ---------- XMP sidecar export ----------
+def test_xmp_build_escapes_and_nests():
+    import xml.etree.ElementTree as ET
+    from photovault.core import xmp
+    root = ET.fromstring(xmp.build([("person", "Anna & <Bob>"), ("thing", "a|b"), ("thing", "a|b"), ("event", "x\x01y")]))
+    ns = {"rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#", "dc": "http://purl.org/dc/elements/1.1/",
+          "lr": "http://ns.adobe.com/lightroom/1.0/"}
+    flat = [li.text for li in root.findall(".//dc:subject//rdf:li", ns)]
+    hier = [li.text for li in root.findall(".//lr:hierarchicalSubject//rdf:li", ns)]
+    assert flat == ["Anna & <Bob>", "a|b", "xy"]
+    assert hier == ["People|Anna & <Bob>", "Things|a/b", "Events|xy"]
+
+
+def test_xmp_export_skips_existing_and_undo(env):
+    from photovault.core import xmp
+    s, conn, lib, org, tmp = env
+    a, b, c = (str(lib / n) for n in ("a.jpg", "b.jpg", "c.jpg"))
+    make_jpg(a)
+    make_jpg(b)
+    before = {p: open(p, "rb").read() for p in (a, b)}
+    write(b + ".xmp", b"someone elses sidecar")
+    entries = {a: [("thing", "beach")], b: [("thing", "dog")], c: [("thing", "gone")], str(lib / "d.jpg"): []}
+    p = xmp.plan(entries)
+    assert (p["create"], p["existing"], p["missing"]) == (1, 1, 1)
+    assert not os.path.exists(a + ".xmp")                        # dry run writes nothing
+
+    r = xmp.export(conn, entries)
+    assert (r["created"], r["existing"], r["failed"]) == (1, 0, 0)
+    assert b"beach" in open(a + ".xmp", "rb").read()
+    assert open(b + ".xmp", "rb").read() == b"someone elses sidecar"
+    assert not os.path.exists(c + ".xmp")
+    assert not [f for f in os.listdir(lib) if f.endswith(".pvtmp")]
+    assert {p: open(p, "rb").read() for p in (a, b)} == before   # photos untouched
+    assert xmp.export(conn, entries)["created"] == 0              # second run is a no-op
+
+    assert journal.undo(conn, r["op"], s.library_roots).get("error")   # generic undo must not touch it
+    res = xmp.undo(conn, s, r["op"])
+    assert (res["restored"], res["skipped"]) == (1, 0)
+    assert not os.path.exists(a + ".xmp")
+    assert open(b + ".xmp", "rb").read() == b"someone elses sidecar"
+    q = conn.execute("SELECT * FROM quarantine WHERE reason='xmp_sidecar'").fetchone()
+    assert os.path.isfile(q["qpath"]) and q["original"] == a + ".xmp"   # moved, not deleted
+    assert xmp.undo(conn, s, r["op"]).get("error")               # can't undo twice
+
+
+def test_xmp_undo_leaves_edited_sidecar(env):
+    from photovault.core import xmp
+    s, conn, lib, org, tmp = env
+    a = str(lib / "a.jpg")
+    make_jpg(a)
+    r = xmp.export(conn, {a: [("thing", "beach")]})
+    with open(a + ".xmp", "ab") as f:
+        f.write(b"<!-- edited by another app -->")
+    res = xmp.undo(conn, s, r["op"])
+    assert (res["restored"], res["skipped"]) == (0, 1)
+    assert os.path.isfile(a + ".xmp")
+
+
+def test_xmp_nothing_created_is_not_undoable(env):
+    from photovault.core import xmp
+    s, conn, lib, org, tmp = env
+    r = xmp.export(conn, {str(lib / "nope.jpg"): [("thing", "x")]})
+    assert r["created"] == 0
+    assert conn.execute("SELECT undoable FROM ops WHERE id=?", (r["op"],)).fetchone()[0] == 0

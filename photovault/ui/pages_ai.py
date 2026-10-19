@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QCompleter, QFrame,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from ..ai import paths, people, setup_env, store
+from ..core import xmp
 from ..ai.client import AiClient
 from .common import button, confirm, header, hrow, info, open_file, px, show_in_explorer, square_pixmap
 from .pages_a import Page
@@ -475,8 +476,12 @@ class TagsPage(Page):
         self.events_btn.clicked.connect(self.compute_events)
         self.search_btn = button("Open tag in Search")
         self.search_btn.clicked.connect(self.open_in_search)
-        self.actions += [self.events_btn, self.search_btn]
-        lay.addLayout(hrow(self.events_btn, self.search_btn, stretch=False))
+        self.xmp_btn = button("Export to XMP sidecars…")
+        self.xmp_btn.setToolTip("Write .xmp files next to your photos with accepted tags and people, for other apps. "
+                                "Photos are never modified; existing sidecars are skipped.")
+        self.xmp_btn.clicked.connect(self.export_xmp)
+        self.actions += [self.events_btn, self.search_btn, self.xmp_btn]
+        lay.addLayout(hrow(self.events_btn, self.search_btn, self.xmp_btn, stretch=False))
         self.status = QLabel("")
         self.status.setObjectName("pageSub")
         lay.addWidget(self.status)
@@ -738,6 +743,35 @@ class TagsPage(Page):
         if self.cur:
             person = self.cur[0] == "person"
             self.ctx.main.open_search_tags([] if person else [self.cur[2]], self.cur[2] if person else "")
+
+    def export_xmp(self):
+        def collect(conn, prog, cancel):
+            ai = store.connect()
+            try:
+                entries = store.accepted_tags_by_path(ai)
+            finally:
+                ai.close()
+            return entries, xmp.plan(entries)
+
+        def planned(res):
+            entries, p = res
+            if not p["create"]:
+                info(self, "Export to XMP sidecars",
+                     f"Nothing to write. {p['existing']:,} photos already have a sidecar, {p['missing']:,} are "
+                     "missing on disk. Only accepted tags and confirmed people are exported.")
+                return
+            if not confirm(self, "Export to XMP sidecars",
+                           f"Write {p['create']:,} .xmp sidecar files next to your photos?\n\n"
+                           f"{p['existing']:,} photos already have a sidecar (skipped, never changed), "
+                           f"{p['missing']:,} are missing on disk.\nThe photos themselves are not touched. "
+                           "You can undo this from the Activity log."):
+                return
+            self.run("Writing XMP sidecars", lambda conn, prog, cancel: xmp.export(conn, entries, prog, cancel),
+                     lambda r: info(self, "XMP export finished",
+                                    f"{r['created']:,} sidecars created, {r['existing']:,} skipped, "
+                                    f"{r['failed']:,} failed."))
+
+        self.run("Preparing XMP export", collect, planned)
 
     def compute_events(self):
         ai = get_client(self.ctx)

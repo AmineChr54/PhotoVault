@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
                                QInputDialog, QLabel, QLineEdit, QListView, QListWidget, QListWidgetItem, QMenu,
                                QSpinBox, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
-from ..core import config, health, journal, quarantine, scanner
+from ..core import config, health, journal, quarantine, scanner, xmp
 from .common import (FIRST_RUN_TEXT, BAD, button, confirm, fill_table, header, hrow, human, info, make_table,
                      open_file, panel, px, section_title, show_in_explorer, square_pixmap)
 from .pages_a import Page, scroll_wrap
@@ -421,6 +421,11 @@ class LogPage(Page):
         if not confirm(self, "Undo", f"Undo this?\n\n{op['summary']}\n\nFiles are moved back to where they were."):
             return
         s = self.ctx.settings
+        if op["kind"] == xmp.OP_KIND:
+            self.run("Undoing", lambda conn, prog, cancel: xmp.undo(conn, s, op["id"], prog, cancel),
+                     lambda r: (self.on_show(), info(self, "Undo finished", f"{r['restored']:,} sidecar files moved to "
+                                                     f"quarantine, {r['skipped']:,} left alone (changed or missing).")))
+            return
 
         def fn(conn, prog, cancel):
             r = journal.undo(conn, op["id"], s.library_roots, [s.quarantine_dir], prog, cancel)

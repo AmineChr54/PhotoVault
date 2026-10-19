@@ -76,3 +76,16 @@ def test_list_events(conn):
     assert events.recompute(conn) >= 1
     ev = store.list_events(conn)
     assert sum(e["n"] for e in ev) == 4 and ev[0]["first_ts"] <= ev[0]["last_ts"]
+
+
+def test_accepted_tags_by_path(conn):
+    pid = conn.execute("INSERT INTO person(name) VALUES ('Anna')").lastrowid
+    for h, manual, rej in (("a", 1, 0), ("b", 0, 0), ("c", 1, 1)):
+        conn.execute("INSERT INTO face(hash,emb,person_id,manual,rejected) VALUES (?,?,?,?,?)",
+                     (h, b"x", pid, manual, rej))
+    conn.commit()
+    m = store.accepted_tags_by_path(conn)
+    assert m["/x/a.jpg"] == [("person", "Anna")]                   # auto beach tag on a not exported
+    assert m["/x/b.jpg"] == [("thing", "night")]                   # manual tag only; unconfirmed face excluded
+    assert "/x/c.jpg" not in m                                     # rejected beach, rejected face
+    assert m["/x/d.jpg"] == [("thing", "night")]

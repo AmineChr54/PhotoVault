@@ -80,6 +80,8 @@ labels new faces. Search by name afterwards.
 ## Tags (AI)
 Lists tags by kind (people, events, things) with photo counts and how many auto tags still await review. Pick a tag to see its photos; auto tags are shown in italic with their score. Select a photo to accept or reject its auto tags, or add your own tag. "Accept all above" confirms every auto tag of the selected thing at or above a score. "Compute events" groups photos into events (date gaps and GPS jumps); rename an event to keep its name. The Events tab lists events with date range and photo count; double-click one to open its photos. People tags come from the People page and are read-only here.
 
+**Export to XMP sidecars...** writes a small `photo.jpg.xmp` file next to each photo with its accepted/manual tags and the people you named, so other apps (digiKam, Immich, Lightroom) can read them. Unreviewed auto tags and automatic face guesses are not exported. You see the counts first; the photos themselves are never changed, and a photo that already has a sidecar is skipped. Undo it from the Activity log (the sidecars go to the quarantine folder).
+
 Search also has tag chips: type a tag name under the search box and press Enter; photos must carry every chip. Tag names typed in the query itself (e.g. "beach") also act as filters.
 
 ## AI Index
@@ -92,7 +94,7 @@ Bin...** / **Send ALL shown to Recycle Bin...** are the only removals; they go t
 files may be deleted permanently by Windows). **Open quarantine folder** shows the folder. Do this after a backup.
 
 ## Activity log
-Everything the app changed. Select a move (organize, quarantine) and click **Undo selected...**.
+Everything the app changed. Select a move (organize, quarantine, XMP export) and click **Undo selected...**.
 
 ## Settings
 - *Folders*: *Library folders (scanned)* (**Add...**, **Remove**), *Organized photos go to:*, *Quarantine folder:*.

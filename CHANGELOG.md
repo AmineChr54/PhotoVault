@@ -4,6 +4,7 @@ All notable changes. Format: Added / Changed / Fixed. Versions follow semver; ta
 
 ## Unreleased
 ### Added
+- Optional XMP sidecar export (#3): Tags page > "Export to XMP sidecars..." writes `photo.jpg.xmp` next to photos with accepted tags and confirmed people (dc:subject + lr:hierarchicalSubject) for digiKam, Immich, Lightroom. Shows counts first, never touches the photo, skips photos that already have a sidecar, and can be undone from the Activity log (sidecars move to quarantine).
 - In-app Help page (#28): the user guide and a What's new section render inside the app (sidebar > Help, or F1 anywhere). New About dialog (sidebar footer or Help page) with version, GitHub link, privacy note and AI model credits (including InsightFace's non-commercial licence). The first-run notice links to Help. The guide and changelog are bundled into the exe.
 
 ### Changed

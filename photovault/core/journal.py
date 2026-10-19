@@ -61,7 +61,7 @@ def undo(conn, op_id: int, roots: list, extra_dirs=(), progress=lambda *a: None,
     """Move every file of an operation back. `extra_dirs` (e.g. quarantine) may have empty
     folders cleaned up as well."""
     op = conn.execute("SELECT * FROM ops WHERE id=?", (op_id,)).fetchone()
-    if not op or not op["undoable"] or op["undone"]:
+    if not op or not op["undoable"] or op["undone"] or op["kind"] == "xmp_export":  # xmp.undo handles those
         return {"restored": 0, "skipped": 0, "error": "This operation can't be undone"}
     moves = conn.execute("SELECT * FROM moves WHERE op_id=? ORDER BY id DESC", (op_id,)).fetchall()
     restored = skipped = 0

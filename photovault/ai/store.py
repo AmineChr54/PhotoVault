@@ -202,6 +202,20 @@ def person_tags_for_photo(conn, hash_) -> list:
         "WHERE f.hash=? AND f.rejected=0 ORDER BY pe.name", (hash_,))]
 
 
+def accepted_tags_by_path(conn) -> dict:
+    """path -> sorted [(kind, name)] for XMP export: tags the user accepted or added (not unreviewed auto tags,
+    not rejections) plus names of people the user confirmed on a face (not automatic guesses)."""
+    out = {}
+    rows = conn.execute(
+        "SELECT p.path, t.kind, t.name FROM photo_tag pt JOIN tag t ON t.id=pt.tag_id "
+        "JOIN photo p ON p.hash=pt.hash AND p.status='ok' WHERE pt.source='manual' AND pt.rejected=0 "
+        "UNION SELECT p.path, 'person', pe.name FROM face f JOIN person pe ON pe.id=f.person_id "
+        "JOIN photo p ON p.hash=f.hash AND p.status='ok' WHERE f.manual=1 AND f.rejected=0").fetchall()
+    for r in rows:
+        out.setdefault(r["path"], set()).add((r["kind"], r["name"]))
+    return {k: sorted(v) for k, v in out.items()}
+
+
 def accept_photo_tag(conn, hash_, tag_id):
     """User confirms an auto tag: it becomes manual so re-tagging never changes it."""
     conn.execute("UPDATE photo_tag SET source='manual', rejected=0 WHERE hash=? AND tag_id=?", (hash_, tag_id))
