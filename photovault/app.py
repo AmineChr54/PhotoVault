@@ -2,7 +2,7 @@
 import os
 import sys
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSettings, QSize, Qt
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow, QProgressBar,
                                QPushButton, QStackedWidget, QStatusBar, QVBoxLayout, QWidget)
@@ -57,7 +57,7 @@ class MainWindow(QMainWindow):
     def __init__(self, settings):
         super().__init__()
         self.setWindowTitle("Photo Vault")
-        self.resize(1400, 900)
+        self._restore_geometry()
         conn = db.connect()
         quarantine.import_legacy_log(conn, settings)
 
@@ -137,6 +137,19 @@ class MainWindow(QMainWindow):
                                                    f"({r['new_or_changed']:,} new/changed, {r['removed']:,} gone)"),
                            parent=self)
 
+    def _restore_geometry(self):
+        """Reopen at the last size/position, else fit ~90% of the screen (never larger than it)."""
+        screen = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+        w, h = min(1400, int(screen.width() * 0.9)), min(900, int(screen.height() * 0.9))
+        self.resize(w, h)
+        self.move(screen.center() - self.rect().center())
+        saved = QSettings("PhotoVault", "PhotoVault").value("window/geometry")
+        if saved:
+            self.restoreGeometry(saved)  # Qt re-fits it if the monitor layout changed
+            if not screen.intersects(self.frameGeometry()) or self.width() > screen.width() or self.height() > screen.height():
+                self.resize(w, h)
+                self.move(screen.center() - self.rect().center())
+
     def _shortcut(self, keys, fn):
         sc = QShortcut(QKeySequence(keys), self)
         sc.setContext(Qt.ApplicationShortcut)
@@ -206,6 +219,7 @@ class MainWindow(QMainWindow):
         self.pages[i].on_show()
 
     def closeEvent(self, ev):
+        QSettings("PhotoVault", "PhotoVault").setValue("window/geometry", self.saveGeometry())
         if self.ctx.tasks.busy:
             self.ctx.tasks.cancel()
             self.ctx.tasks.pool.waitForDone(10000)
