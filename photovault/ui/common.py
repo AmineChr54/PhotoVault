@@ -8,8 +8,8 @@ import traceback
 
 import xxhash
 from PIL import Image, ImageOps
-from PySide6.QtCore import QObject, QRectF, QRunnable, QSize, Qt, QThreadPool, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPalette, QPixmap
+from PySide6.QtCore import QObject, QRectF, QRunnable, QSize, Qt, QThreadPool, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QImage, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QMessageBox, QProgressBar,
                                QPushButton, QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout,
                                QWidget, QHeaderView, QAbstractItemView)
@@ -39,6 +39,10 @@ def show_in_explorer(path: str) -> None:
 def open_file(path: str) -> None:
     if os.path.exists(path):
         os.startfile(path)
+
+
+def open_url(url: str) -> None:
+    QDesktopServices.openUrl(QUrl(url))
 
 
 def confirm(parent, title: str, text: str) -> bool:

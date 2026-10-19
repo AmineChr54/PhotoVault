@@ -480,6 +480,8 @@ class SettingsPage(Page):
         self.theme = QComboBox()
         self.theme.addItems(["dark", "light"])
         form.addRow("Theme:", self.theme)
+        self.upd = QCheckBox("Check for new versions once a day (asks github.com for the latest version number)")
+        form.addRow("Updates:", self.upd)
         pl.addLayout(form)
         lay.addWidget(p)
 
@@ -528,6 +530,7 @@ class SettingsPage(Page):
         self.sim.setValue(int(s.similar_threshold))
         self.remind.setValue(int(s.backup_reminder_days))
         self.theme.setCurrentText(s.theme)
+        self.upd.setChecked(bool(s.check_updates))
         self.rules.setRowCount(0)
         for pat, cat in s.folder_rules:
             self._add_rule(pat, cat)
@@ -584,6 +587,7 @@ class SettingsPage(Page):
         s.backup_reminder_days = self.remind.value()
         theme_changed = s.theme != self.theme.currentText()
         s.theme = self.theme.currentText()
+        s.check_updates = self.upd.isChecked()
         s.folder_rules = self._rule_list()
         if os.path.normcase(s.organized_root) not in {os.path.normcase(r) for r in s.library_roots}:
             s.library_roots.append(s.organized_root)
@@ -591,6 +595,7 @@ class SettingsPage(Page):
         s.setup_complete = True
         s.save()
         self.firstrun.hide()
+        self.ctx.main.refresh_updates()
         if theme_changed:
             self.ctx.main.refresh_theme()
         self.saved.setText("Saved ✔ (run a library scan if you changed folders)")

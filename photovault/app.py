@@ -1,14 +1,15 @@
 """Photo Vault - main window."""
 import os
 import sys
+import threading
 
-from PySide6.QtCore import QSettings, QSize, Qt
+from PySide6.QtCore import QObject, QSettings, QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow, QProgressBar,
                                QPushButton, QStackedWidget, QStatusBar, QVBoxLayout, QWidget)
 
 from . import __version__
-from .core import config, db, quarantine, scanner
+from .core import config, db, quarantine, scanner, updates
 from .ui import theme
 from .ui.common import Tasks, ThumbCache, apply_theme
 from .ui.nav import ICON_ROLE, NavDelegate
@@ -51,6 +52,10 @@ class Ctx:
 def resource(name):
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     return os.path.join(base, name)
+
+
+class _UpdateSignals(QObject):
+    done = Signal(object)  # latest release tag, or None when the check failed
 
 
 class MainWindow(QMainWindow):
@@ -136,6 +141,31 @@ class MainWindow(QMainWindow):
                            lambda r: label.setText(f"Library up to date: {r['total']:,} files "
                                                    f"({r['new_or_changed']:,} new/changed, {r['removed']:,} gone)"),
                            parent=self)
+        self.refresh_updates()
+        self._maybe_check_updates()
+
+    def refresh_updates(self):
+        """Show or hide the 'new version' notice on the Dashboard (settings changed or a check finished)."""
+        for p in self.pages:
+            if isinstance(p, DashboardPage):
+                p.refresh_update()
+
+    def _maybe_check_updates(self):
+        """At most once a day, ask GitHub for the latest release in a daemon thread. Silent on any failure."""
+        s = self.ctx.settings
+        if os.environ.get("PHOTOVAULT_NO_UPDATE_CHECK") or not updates.check_due(s):
+            return
+        self._upd_signals = _UpdateSignals()  # kept on self so the queued signal reaches the GUI thread
+
+        def done(tag):
+            if tag:  # a failed (offline) check changes nothing and is retried next start
+                updates.record_result(s, tag)
+                s.save()
+                self.refresh_updates()
+
+        self._upd_signals.done.connect(done)
+        sig = self._upd_signals
+        threading.Thread(target=lambda: sig.done.emit(updates.fetch_latest()), daemon=True).start()
 
     def _restore_geometry(self):
         """Reopen at the last size/position, else fit ~90% of the screen (never larger than it)."""
@@ -195,7 +225,7 @@ class MainWindow(QMainWindow):
                 return
 
     def show_about(self):
-        AboutDialog(self).exec()
+        AboutDialog(self, self.ctx.settings).exec()
 
     def open_search(self, text):
         """Jump to the Search page and run a query (used by People)."""

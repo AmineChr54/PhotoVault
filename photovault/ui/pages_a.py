@@ -7,10 +7,11 @@ from PySide6.QtWidgets import (QButtonGroup, QComboBox, QFileDialog, QFrame, QGr
                                QListWidget, QListWidgetItem, QRadioButton, QScrollArea, QSplitter, QTabWidget,
                                QVBoxLayout, QWidget)
 
-from ..core import dupes, quarantine, scanner, stats
+from ..core import dupes, quarantine, scanner, stats, updates
+from .. import __version__
 from . import theme
 from .common import (FIRST_RUN_TEXT, BAD, GOOD, WARN, BarChart, Card, button, confirm, header, hrow, human, info, open_file,
-                     panel, px, section_title, show_in_explorer)
+                     open_url, panel, px, section_title, show_in_explorer)
 
 
 class Page(QWidget):
@@ -64,6 +65,15 @@ class DashboardPage(Page):
         self.firstrun.setObjectName("bigResult")
         self.firstrun.linkActivated.connect(lambda _h: self.ctx.main.open_help())
         lay.addWidget(self.firstrun)
+
+        self.update_panel, ul = panel()
+        self.update_label = QLabel("")
+        self.update_label.setWordWrap(True)
+        self.update_btn = button("View release", primary=True)
+        self.update_btn.clicked.connect(lambda: open_url(updates.release_url(updates.available(self.ctx.settings))))
+        ul.addLayout(hrow(self.update_label, None, self.update_btn))
+        self.update_panel.hide()
+        lay.addWidget(self.update_panel)
 
         self.scan_btn = button("Scan library", primary=True)
         self.scan_btn.clicked.connect(self.scan)
@@ -121,8 +131,16 @@ class DashboardPage(Page):
                      f"Scan done: {r['total']:,} files ({r['new_or_changed']:,} new/changed, "
                      f"{r['removed']:,} gone) in {r['seconds']}s"))
 
+    def refresh_update(self):
+        """Show the 'new version available' notice (only when the opt-out check found a newer release)."""
+        tag = updates.available(self.ctx.settings)
+        self.update_panel.setVisible(bool(tag))
+        if tag:
+            self.update_label.setText(f"<b>Photo Vault {tag.lstrip('v')} is available.</b> You have {__version__}.")
+
     def refresh(self):
         self.firstrun.setVisible(not self.ctx.settings.setup_complete)
+        self.refresh_update()
         s = stats.collect(self.ctx.conn, self.ctx.settings)
         self.stats = s
         c = self.cards

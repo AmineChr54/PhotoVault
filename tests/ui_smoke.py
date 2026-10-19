@@ -65,6 +65,7 @@ os.makedirs(out, exist_ok=True)
 app = QApplication(sys.argv)
 s = config.Settings.load()
 apply_theme(app, s.theme, s.ui_zoom)
+s.check_updates = False  # no network in the smoke run
 w = MainWindow(s)
 w.resize(1400, 900)
 w.show()

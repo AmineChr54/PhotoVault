@@ -7,7 +7,8 @@ from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QListWidget, QListWi
 
 from .. import __version__
 from . import theme
-from .common import button, header
+from ..core import updates
+from .common import button, header, open_url
 from .pages_a import Page
 
 GITHUB_URL = "https://github.com/AmineChr54/PhotoVault"
@@ -69,7 +70,7 @@ class HelpPage(Page):
         top = QHBoxLayout()
         top.addWidget(header("Help", "User guide and what's new. Press F1 anywhere to come back here."), 1)
         self.about_btn = button("About Photo Vault")
-        self.about_btn.clicked.connect(lambda: AboutDialog(self).exec())
+        self.about_btn.clicked.connect(lambda: AboutDialog(self, self.ctx.settings).exec())
         top.addWidget(self.about_btn, 0, Qt.AlignTop)
         lay.addLayout(top)
         body = QHBoxLayout()
@@ -136,7 +137,7 @@ class HelpPage(Page):
 
 
 class AboutDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, settings=None):
         super().__init__(parent)
         self.setWindowTitle("About Photo Vault")
         t = theme.tokens()
@@ -158,6 +159,11 @@ class AboutDialog(QDialog):
         ver.setObjectName("pageSub")
         ver.setAlignment(Qt.AlignCenter)
         lay.addWidget(ver)
+        newer = updates.available(settings) if settings is not None else ""
+        if newer:
+            upd = button(f"Version {newer.lstrip('v')} is available - view release")
+            upd.clicked.connect(lambda: open_url(updates.release_url(newer)))
+            lay.addWidget(upd)
         tag = QLabel(TAGLINE)
         tag.setWordWrap(True)
         tag.setAlignment(Qt.AlignCenter)
@@ -166,7 +172,9 @@ class AboutDialog(QDialog):
         link.setOpenExternalLinks(True)
         link.setAlignment(Qt.AlignCenter)
         lay.addWidget(link)
-        priv = QLabel(f"<b>{PRIVACY}</b> Everything runs locally; nothing is uploaded.")
+        priv = QLabel(f"<b>{PRIVACY}</b> Everything runs locally; nothing is uploaded. "
+                     "The only network request is the optional daily update check (Settings), which just asks "
+                     "GitHub for the latest version number.")
         priv.setWordWrap(True)
         priv.setAlignment(Qt.AlignCenter)
         lay.addWidget(priv)

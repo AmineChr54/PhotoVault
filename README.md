@@ -38,6 +38,14 @@ Settings and the library index live in `%LOCALAPPDATA%\PhotoVault` (`settings.js
 `PHOTOVAULT_HOME` environment variable. AI state (`ai.db`, models, face crops) lives in `data/`
 (`%LOCALAPPDATA%\PhotoVault\ai` for the packaged exe).
 
+## Privacy and the update check
+Your photos and library data never leave your machine. The one network request the app makes by itself is an optional
+**update check**: at most once a day, in the background, it asks the GitHub API for the latest release number and, if it
+is newer than yours, shows a notice on the Dashboard and in About with a button to open the release page. Nothing is
+downloaded or installed, no library data or identifiers are sent, and it fails silently when you are offline. Turn it
+off under **Settings > Behaviour > Updates** (`check_updates` in `settings.json`). The AI setup separately downloads
+models when you ask it to.
+
 ## Safety rules
 - Nothing is deleted directly: files go to the quarantine folder, and only "Send to Recycle Bin" removes them.
 - Duplicates are re-checked byte-for-byte right before moving.

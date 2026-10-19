@@ -4,6 +4,7 @@ All notable changes. Format: Added / Changed / Fixed. Versions follow semver; ta
 
 ## Unreleased
 ### Added
+- Update check (#8): at most once a day, in a background thread, Photo Vault asks the GitHub API for the latest release and shows a "new version available" notice with a "View release" button on the Dashboard and in About. Nothing is downloaded or installed, nothing but that one request is sent, and it fails silently offline. Turn it off in Settings > Behaviour > Updates (`check_updates`); documented in the README and user guide.
 - In-app Help page (#28): the user guide and a What's new section render inside the app (sidebar > Help, or F1 anywhere). New About dialog (sidebar footer or Help page) with version, GitHub link, privacy note and AI model credits (including InsightFace's non-commercial licence). The first-run notice links to Help. The guide and changelog are bundled into the exe.
 
 ### Changed

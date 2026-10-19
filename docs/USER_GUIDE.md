@@ -26,7 +26,8 @@ Button and page names below are copied from the app. Pages are listed in sidebar
 ## Dashboard
 Overview cards (Photos, Videos, Library size, Without a date, Duplicates found, In quarantine, Last backup, Free
 space) and charts. **Scan library** re-reads your library folders (a quick scan also runs at every start).
-**Export report...** saves the overview. Run a scan after changing folders in Settings.
+**Export report...** saves the overview. When a newer release exists, a notice at the top offers **View release**
+(see *Update check* under Settings). Run a scan after changing folders in Settings.
 
 ## Duplicates
 Two tabs. **Exact copies**: click **Find exact duplicates**. **Similar photos**: click **Find similar photos**
@@ -97,6 +98,10 @@ Everything the app changed. Select a move (organize, quarantine) and click **Und
 ## Settings
 - *Folders*: *Library folders (scanned)* (**Add...**, **Remove**), *Organized photos go to:*, *Quarantine folder:*.
 - *Behaviour*: *Similar-photo sensitivity (1 strict - 7 loose)*, *Remind me to back up after:* N days, *Theme:*.
+- *Updates*: **Check for new versions once a day** is on by default. When on, at most once a day the app asks
+  github.com for the latest release number (nothing else is sent, no library data) and, if it is newer than yours,
+  shows a notice on the Dashboard and in About with a button that opens the release page. It never downloads or installs
+  anything and stays silent when you are offline. Untick it to make Photo Vault fully offline.
 - *Folder rules*: each top-level folder name (wildcards `*`) maps to a category (raw, curated, screenshots,
   projects, documents, other, skip, chat:App, gaming:Name); first match wins, unmatched folders count as raw.
   **Add rule**, **Remove selected rule**, **Move up**, **Move down**, **Reset to defaults**. The built-in rules were

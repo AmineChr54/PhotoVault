@@ -116,6 +116,9 @@ class Settings:
     backup_reminder_days: int = 30
     theme: str = "dark"
     ui_zoom: float = 1.0
+    check_updates: bool = True  # once a day, ask GitHub for the latest release (core/updates.py)
+    last_update_check: float = 0.0
+    latest_version: str = ""
     folder_rules: list = field(default_factory=lambda: [list(r) for r in DEFAULT_RULES])
 
     @property
