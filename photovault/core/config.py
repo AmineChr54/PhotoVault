@@ -116,6 +116,8 @@ class Settings:
     backup_reminder_days: int = 30
     theme: str = "dark"
     ui_zoom: float = 1.0
+    check_updates: bool = True
+    last_update_check: float = 0.0
     folder_rules: list = field(default_factory=lambda: [list(r) for r in DEFAULT_RULES])
 
     @property

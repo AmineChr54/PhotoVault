@@ -76,5 +76,8 @@ Work is tracked in GitHub Issues (P0-P3), done by AI agents on `claude/*` branch
 by tag. See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md) and the
 [human test checklist](docs/HUMAN_TEST_CHECKLIST.md) for what only a person can verify.
 
+## Updates and privacy
+The app asks `api.github.com` for the latest release at most once a day (switch off in Settings); nothing else is sent. Updates are verified against the SHA-256 published with each release.
+
 ## License
 MIT, see [LICENSE](LICENSE). Optional AI models have their own licences (see the About dialog and the section above).

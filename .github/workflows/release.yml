@@ -27,7 +27,11 @@ jobs:
           python -m PyInstaller --noconfirm --clean --windowed --name PhotoVault --icon icon.ico --add-data "icon.ico;." --add-data "icon-256.png;." --add-data "docs/USER_GUIDE.md;docs" --add-data "CHANGELOG.md;." --add-data "photovault;worker_src/photovault" --add-data "requirements-ai.txt;worker_src" --add-data "constraints.txt;worker_src" --exclude-module tkinter --exclude-module matplotlib run.pyw
       - name: Zip
         run: Compress-Archive -Path dist/PhotoVault -DestinationPath "PhotoVault-${{ github.ref_name }}-win64.zip"
+      - name: SHA-256
+        run: |
+          $z = "PhotoVault-${{ github.ref_name }}-win64.zip"
+          "$((Get-FileHash $z -Algorithm SHA256).Hash.ToLower())  $z" | Set-Content "$z.sha256" -Encoding ascii
       - name: Publish release
-        run: gh release create "${{ github.ref_name }}" "PhotoVault-${{ github.ref_name }}-win64.zip" --generate-notes --title "Photo Vault ${{ github.ref_name }}" ${{ contains(github.ref_name, '-') && '--prerelease' || '' }}
+        run: gh release create "${{ github.ref_name }}" "PhotoVault-${{ github.ref_name }}-win64.zip" "PhotoVault-${{ github.ref_name }}-win64.zip.sha256" --generate-notes --title "Photo Vault ${{ github.ref_name }}" ${{ contains(github.ref_name, '-') && '--prerelease' || '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
