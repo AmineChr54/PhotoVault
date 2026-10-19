@@ -7,7 +7,7 @@ from datetime import datetime
 from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QCompleter, QFrame, QHBoxLayout, QLabel, QLineEdit,
-                               QDoubleSpinBox, QInputDialog, QListView, QListWidget, QListWidgetItem, QMenu,
+                               QDoubleSpinBox, QHeaderView, QInputDialog, QListView, QListWidget, QListWidgetItem, QMenu,
                                QProgressBar, QPushButton, QScrollArea, QSplitter, QTabWidget, QTreeWidget,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
@@ -526,11 +526,17 @@ class TagsPage(Page):
         self.add_edit.returnPressed.connect(self.add_manual)
         add = button("Add tag", primary=True)
         add.clicked.connect(self.add_manual)
-        rl.addLayout(hrow(self.accept_btn, self.remove_btn, self.add_edit, add))
+        add_row = hrow(self.accept_btn, self.remove_btn, self.add_edit, add)
+        add_row.setStretchFactor(self.add_edit, 1)  # keep the placeholder readable
+        rl.addLayout(add_row)
         split.addWidget(right)
         split.setStretchFactor(1, 3)
         self.tree.setMinimumWidth(300)
-        self.tree.setColumnWidth(0, 170)
+        hdr = self.tree.header()
+        hdr.setStretchLastSection(False)
+        hdr.setSectionResizeMode(0, QHeaderView.Stretch)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         split.setSizes([320, 900])
         tl = QVBoxLayout(tab)
         tl.setContentsMargins(0, 0, 0, 0)

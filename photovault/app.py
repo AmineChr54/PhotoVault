@@ -180,7 +180,9 @@ class MainWindow(QMainWindow):
         self.ctx.settings.ui_zoom = z
         self.ctx.settings.save()
         self.refresh_theme()
-        self.statusBar().showMessage(f"Zoom {round(z * 100)}%", 1500)
+        # Not statusBar().showMessage(): a task starting meanwhile re-shows the status label on top of it.
+        if not self.ctx.tasks.busy:
+            self.ctx.tasks.label.setText(f"Zoom {round(z * 100)}%")
 
     def refresh_theme(self):
         s = self.ctx.settings
