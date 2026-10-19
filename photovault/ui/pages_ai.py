@@ -57,11 +57,17 @@ class SetupController(QObject):
         self.setup = None
         self._cb = lambda stage, frac, text: self.progress.emit(stage, -1.0 if frac is None else frac, text)
 
-    def start(self, factory=setup_env.AiSetup):
+    def start(self, factory=None):
         if self.running:
             return
-        self.running, self.error = True, ""
-        self.setup = factory(progress=self._cb)
+        self.error = ""
+        try:
+            self.setup = (factory or setup_env.AiSetup)(progress=self._cb)
+        except Exception as e:
+            self.error = f"Could not start the AI setup: {e}"
+            self.changed.emit()
+            return
+        self.running = True
         self.changed.emit()
 
         def work():
@@ -99,7 +105,7 @@ class EnableAiPanel(QFrame):
         self.bar = QProgressBar()
         self.go_btn = button("Enable AI features", primary=True)
         self.cancel_btn = button("Cancel")
-        self.go_btn.clicked.connect(self.ctl.start)
+        self.go_btn.clicked.connect(lambda _checked=False: self.ctl.start())
         self.cancel_btn.clicked.connect(self.ctl.cancel)
         lay.addWidget(self.label)
         lay.addWidget(self.bar)
