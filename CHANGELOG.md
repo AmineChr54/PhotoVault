@@ -4,6 +4,7 @@ All notable changes. Format: Added / Changed / Fixed. Versions follow semver; ta
 
 ## Unreleased
 ### Added
+- Timeline & Places page (#4, first slice): browse the AI index by year > month > event (with counts and a cover thumbnail) and by rounded GPS cell (about 100 km, 10 km or 1 km), then open the selection in Browse. Read-only, offline, no place-name lookup or map picture yet; shows a hint until the AI index exists.
 - In-app Help page (#28): the user guide and a What's new section render inside the app (sidebar > Help, or F1 anywhere). New About dialog (sidebar footer or Help page) with version, GitHub link, privacy note and AI model credits (including InsightFace's non-commercial licence). The first-run notice links to Help. The guide and changelog are bundled into the exe.
 
 ### Changed

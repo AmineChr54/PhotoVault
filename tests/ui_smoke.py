@@ -148,6 +148,7 @@ steps += [
     page(IDX["AiIndexPage"], "11_ai_index"),
     page(IDX["PeoplePage"], "12_people"),
     page(IDX["TagsPage"], "12b_tags"),
+    page(IDX["ExplorePage"], "12c_timeline_places"),
     page(IDX["SearchPage"], "13_search", lambda: p[IDX["SearchPage"]].set_query("beach")),
     thumbs_then("13b_search_results", 25000 if AiClient().available else 1000),
     page(IDX["HelpPage"], "13c_help"),

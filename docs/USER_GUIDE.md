@@ -82,6 +82,9 @@ Lists tags by kind (people, events, things) with photo counts and how many auto 
 
 Search also has tag chips: type a tag name under the search box and press Enter; photos must carry every chip. Tag names typed in the query itself (e.g. "beach") also act as filters.
 
+## Timeline & Places (AI)
+Browse the AI index by when and where. **Timeline** lists years, months and events (compute events on the Tags page) with photo counts and a cover thumbnail. **Places** groups photos that have a GPS position into map cells (about 100 km, 10 km or 1 km wide, your choice) with a count; there is no map picture and no place-name lookup, so places are shown as coordinates. Select a year, month, event or place and click **Show in Browse** (or double-click) to see exactly those photos; click **Show** on Browse to go back to the normal filters. Nothing is changed. Both tabs stay empty with a hint until the AI index is built.
+
 ## AI Index
 **Index new photos** reads every photo once (originals are never changed). **Quick test (200 photos)** tries it on a
 small batch. **Stop** halts it; you can continue later.

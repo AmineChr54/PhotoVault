@@ -15,6 +15,7 @@ from .ui.nav import ICON_ROLE, NavDelegate
 from .ui.pages_a import DashboardPage, DuplicatesPage
 from .ui.pages_ai import AiIndexPage, PeoplePage, SearchPage, TagsPage
 from .ui.pages_b import BackupPage, ImportPage, OrganizePage
+from .ui.pages_explore import ExplorePage
 from .ui.pages_c import BrowsePage, HealthPage, LogPage, QuarantinePage, SettingsPage
 from .ui.pages_help import AboutDialog, HelpPage
 
@@ -29,6 +30,7 @@ PAGES = [
     ("Search", SearchPage),
     ("People", PeoplePage),
     ("Tags", TagsPage),
+    ("Timeline & Places", ExplorePage),
     ("AI Index", AiIndexPage),
     ("Quarantine", QuarantinePage),
     ("Activity log", LogPage),
@@ -38,7 +40,7 @@ PAGES = [
 PAGE_ICONS = {
     DashboardPage: "dashboard", DuplicatesPage: "duplicates", OrganizePage: "organize", ImportPage: "import",
     BackupPage: "backup", HealthPage: "health", BrowsePage: "browse", SearchPage: "search", PeoplePage: "people",
-    TagsPage: "tags", AiIndexPage: "ai", QuarantinePage: "quarantine", LogPage: "log", SettingsPage: "settings",
+    TagsPage: "tags", ExplorePage: "map", AiIndexPage: "ai", QuarantinePage: "quarantine", LogPage: "log", SettingsPage: "settings",
     HelpPage: "help",
 }
 
@@ -203,6 +205,14 @@ class MainWindow(QMainWindow):
             if cls is SearchPage:
                 self.nav.setCurrentRow(i)
                 self.pages[i].set_query(text)
+                return
+
+    def open_browse_paths(self, paths, title=""):
+        """Jump to Browse showing exactly these photos (used by Timeline & Places)."""
+        for i, (_, cls) in enumerate(PAGES):
+            if cls is BrowsePage:
+                self.nav.setCurrentRow(i)
+                self.pages[i].show_paths(paths, title)
                 return
 
     def open_search_tags(self, tags, text=""):

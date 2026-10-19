@@ -261,6 +261,25 @@ class BrowsePage(Page):
         self.count.setText(f"{len(self.rows):,} photos/videos")
         self.load_more()
 
+    def show_paths(self, paths, title=""):
+        """Show exactly these photos (used by Timeline & Places). Paths the library index does not know are
+        still listed by file name. Use Show to go back to the normal filters."""
+        known = {}
+        for i in range(0, len(paths), 500):
+            chunk = paths[i:i + 500]
+            for r in self.ctx.conn.execute(
+                    f"SELECT path, name, date_taken, kind FROM files WHERE path IN ({','.join('?' * len(chunk))})", chunk):
+                known[r["path"]] = r
+        self.rows = [known.get(p) or {"path": p, "name": os.path.basename(p), "date_taken": "", "kind": "image"}
+                     for p in paths]
+        self.ctx.thumbs.clear_queue()
+        self.grid.clear()
+        self.items_by_path = {}
+        self.shown = 0
+        self.count.setText(f"{title + ': ' if title else ''}{len(self.rows):,} photos/videos "
+                           "(click Show to return to the normal filters)")
+        self.load_more()
+
     def _make_blank(self):
         self.blank = QPixmap(px(170), px(170))
         self.blank.fill(Qt.transparent)
