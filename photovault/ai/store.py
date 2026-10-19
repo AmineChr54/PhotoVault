@@ -2,7 +2,7 @@
 import os
 import sqlite3
 
-from . import paths
+from . import paths, variants
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS photo (
@@ -77,6 +77,46 @@ def connect(path=None) -> sqlite3.Connection:
     conn.executescript(SCHEMA)
     _migrate(conn)
     return conn
+
+
+META_MODEL = "embedding_model"
+
+
+def index_model(conn):
+    """Identity of the model that produced the stored embeddings, or None for an index that predates this record."""
+    row = conn.execute("SELECT value FROM meta WHERE key=?", (META_MODEL,)).fetchone()
+    return row["value"] if row else None
+
+
+def model_choice(conn, fallback=(variants.DEFAULT_ID, variants.DEFAULT_FIT)) -> tuple:
+    """(variant_id, fit) that queries must use to match the stored embeddings; `fallback` for an empty index."""
+    stored = index_model(conn)
+    if stored:
+        return variants.parse_identity(stored)
+    if conn.execute("SELECT 1 FROM embedding LIMIT 1").fetchone():
+        return variants.parse_identity(variants.DEFAULT_IDENTITY)   # legacy index: always the default model
+    return fallback
+
+
+def needs_model_reset(conn, identity) -> bool:
+    """True when stored embeddings came from a different model/fitting than `identity` (so they can't be mixed)."""
+    stored = index_model(conn) or variants.DEFAULT_IDENTITY   # an index without a record is the original model
+    if stored == identity:
+        return False
+    return conn.execute("SELECT 1 FROM embedding LIMIT 1").fetchone() is not None
+
+
+def ensure_index_model(conn, identity) -> bool:
+    """Make the index consistent with `identity`. If it holds embeddings from another model, drop them (and the
+    'seen' list, so every photo is re-embedded on the next run) and return True. Only derived data is dropped:
+    originals, faces, people and manual tags are kept; auto tags are recomputed as photos are re-embedded."""
+    reset = needs_model_reset(conn, identity)
+    if reset:
+        conn.execute("DELETE FROM embedding")
+        conn.execute("DELETE FROM seen")
+    conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)", (META_MODEL, identity))
+    conn.commit()
+    return reset
 
 
 def vec_to_blob(v, dtype=None) -> bytes:

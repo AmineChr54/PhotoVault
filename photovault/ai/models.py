@@ -4,7 +4,7 @@ import numpy as np
 import onnxruntime as ort
 from PIL import Image
 
-from . import paths
+from . import paths, preprocess, variants
 
 ARC_TEMPLATE = np.array([[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366],
                          [41.5493, 92.3655], [70.7299, 92.2041]], dtype=np.float32)
@@ -32,20 +32,24 @@ def _norm(x):
 
 
 class SigLIP:
-    SIZE = 256
     MAXLEN = 64
 
-    def __init__(self, prefer_gpu=True):
-        self.vision = session(paths.SIGLIP / "onnx" / "vision_model.onnx", prefer_gpu)
+    def __init__(self, prefer_gpu=True, variant_id=variants.DEFAULT_ID, fit=variants.DEFAULT_FIT):
+        self.variant = variants.get(variant_id)
+        self.fit = variants.clean_fit(fit)
+        self.SIZE = self.variant.size
+        self.dir = paths.MODELS / self.variant.dirname
+        for name in ("onnx/vision_model.onnx", "onnx/text_model.onnx", "tokenizer.json"):
+            if not (self.dir / name).exists():
+                raise FileNotFoundError(f"AI model {self.variant.id} is not downloaded ({name} missing): "
+                                        "run 'Enable AI features' again to download it")
+        self.vision = session(self.dir / "onnx" / "vision_model.onnx", prefer_gpu)
         self._text = None
         self._tok = None
         self.prefer_gpu = prefer_gpu
 
     def prep(self, img: Image.Image) -> np.ndarray:
-        im = img.convert("RGB").resize((self.SIZE, self.SIZE), Image.Resampling.BILINEAR)
-        a = np.asarray(im, dtype=np.float32) / 255.0
-        a = (a - 0.5) / 0.5
-        return a.transpose(2, 0, 1)
+        return preprocess.prep_image(img, self.SIZE, self.fit)
 
     def encode_images(self, batch: np.ndarray) -> np.ndarray:
         out = self.vision.run(["pooler_output"], {"pixel_values": batch})[0]
@@ -54,11 +58,11 @@ class SigLIP:
     def _load_text(self):
         if self._text is None:
             from tokenizers import Tokenizer
-            self._tok = Tokenizer.from_file(str(paths.SIGLIP / "tokenizer.json"))
+            self._tok = Tokenizer.from_file(str(self.dir / "tokenizer.json"))
             self._tok.enable_padding(length=self.MAXLEN, pad_id=0, pad_token="<pad>")
             self._tok.enable_truncation(self.MAXLEN)
             # Text model is large (multilingual vocab): CPU is plenty for a single query.
-            self._text = session(paths.SIGLIP / "onnx" / "text_model.onnx", prefer_gpu=False)
+            self._text = session(self.dir / "onnx" / "text_model.onnx", prefer_gpu=False)
 
     def encode_text(self, texts) -> np.ndarray:
         self._load_text()

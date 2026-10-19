@@ -20,7 +20,9 @@ def main():
 
     def sig():
         if state["sig"] is None:
-            state["sig"] = SigLIP(prefer_gpu=True)
+            # Queries must use the model that produced the stored embeddings, not whatever is selected now.
+            vid, fit = store.model_choice(conn, indexer.selected_model())
+            state["sig"] = SigLIP(True, vid, fit)
         return state["sig"]
 
     def do_search(req):
@@ -45,6 +47,7 @@ def main():
             send({"event": "index_error", "error": f"{type(e).__name__}: {e}"})
         finally:
             sys.stdout = real
+            state["sig"] = None   # the index may now come from a different model
             state["ix"].reload()
             send({"event": "index_finished"})
 

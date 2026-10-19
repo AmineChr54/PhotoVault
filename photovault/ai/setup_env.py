@@ -13,20 +13,17 @@ import threading
 import urllib.request
 from pathlib import Path
 
-from . import paths
+from ..core import config
+from . import paths, variants
 
 PYTHON_URL = "https://www.python.org/downloads/windows/"
 HF = "https://huggingface.co"
-# (url, destination relative to paths.MODELS)
-MODEL_FILES = [
-    (f"{HF}/onnx-community/siglip2-base-patch16-256-ONNX/resolve/main/onnx/vision_model.onnx",
-     "siglip2/onnx/vision_model.onnx"),
-    (f"{HF}/onnx-community/siglip2-base-patch16-256-ONNX/resolve/main/onnx/text_model.onnx",
-     "siglip2/onnx/text_model.onnx"),
-    (f"{HF}/onnx-community/siglip2-base-patch16-256-ONNX/resolve/main/tokenizer.json", "siglip2/tokenizer.json"),
+FACE_FILES = [
     (f"{HF}/public-data/insightface/resolve/main/models/buffalo_l/det_10g.onnx", "faces/det_10g.onnx"),
     (f"{HF}/public-data/insightface/resolve/main/models/buffalo_l/w600k_r50.onnx", "faces/w600k_r50.onnx"),
 ]
+# (url, destination relative to paths.MODELS) for the default SigLIP model + faces
+MODEL_FILES = variants.files(variants.get(variants.DEFAULT_ID)) + FACE_FILES
 NOFLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
@@ -57,8 +54,14 @@ def find_python(run=subprocess.run, which=shutil.which):
     return None
 
 
+def model_files(settings=None) -> list:
+    """Files needed for the SigLIP variant chosen in settings (``ai_model``) plus the face models."""
+    settings = settings or config.Settings.load()
+    return variants.files(variants.get(settings.ai_model)) + FACE_FILES
+
+
 def models_ready() -> bool:
-    return all((paths.MODELS / rel).exists() for _, rel in MODEL_FILES)
+    return all((paths.MODELS / rel).exists() for _, rel in model_files())
 
 
 def download(url, dest, progress=None, cancel=None, opener=urllib.request.urlopen):
@@ -144,12 +147,13 @@ class AiSetup:
         self.progress("pip", None, "Installing AI packages (a few minutes)...")
         if self._stream(cmd, lambda s: self.progress("pip", None, s[:90]) if s else None) != 0:
             raise SetupError("Installing the AI packages failed (network / disk space?) - retry to resume.")
-        for i, (url, rel) in enumerate(MODEL_FILES):
+        wanted = model_files()
+        for i, (url, rel) in enumerate(wanted):
             self._check()
             name = rel.rsplit("/", 1)[-1]
 
             def prog(done, total, i=i, name=name):
-                f = (i + (done / total if total else 0)) / len(MODEL_FILES)
+                f = (i + (done / total if total else 0)) / len(wanted)
                 self.progress("models", f, f"Downloading {name}: {done >> 20} MB"
                               + (f" / {total >> 20} MB" if total else ""))
             try:

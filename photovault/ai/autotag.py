@@ -7,17 +7,20 @@ import base64
 
 import numpy as np
 
-from . import store, vocab
+from . import store, variants, vocab
 
 
-def _meta_key():
-    return f"tag_text_vecs_v{vocab.VOCAB_VERSION}"
+def _meta_key(conn):
+    """Label vectors depend on the embedding model; the default model keeps the original key."""
+    ident = store.index_model(conn) or variants.DEFAULT_IDENTITY
+    base = f"tag_text_vecs_v{vocab.VOCAB_VERSION}"
+    return base if ident == variants.DEFAULT_IDENTITY else f"{base}_{ident}"
 
 
 def label_vectors(conn, encode_text=None):
     """(labels, thresholds, matrix[n, d]) with L2-normalised rows. Text vectors are computed once via
     encode_text(list[str]) -> array and cached in the meta table; with a warm cache no model is needed."""
-    key = _meta_key()
+    key = _meta_key(conn)
     row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
     labels = [v[0] for v in vocab.VOCAB]
     thr = np.array([vocab.DEFAULT_THRESHOLD if v[2] is None else v[2] for v in vocab.VOCAB], np.float32)

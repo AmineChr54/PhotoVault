@@ -83,7 +83,7 @@ Lists tags by kind (people, events, things) with photo counts and how many auto 
 Search also has tag chips: type a tag name under the search box and press Enter; photos must carry every chip. Tag names typed in the query itself (e.g. "beach") also act as filters.
 
 ## AI Index
-**Index new photos** reads every photo once (originals are never changed). **Quick test (200 photos)** tries it on a
+**Index new photos** reads every photo once (originals are never changed). Advanced: `ai_model` (`base-256`, `base-384`, `so400m-384`) and `ai_fit` (`squash`, `pad`) in `settings.json` choose a larger/other search model; after changing them click **Enable AI features** (downloads it) and re-index, which re-reads the whole library. **Quick test (200 photos)** tries it on a
 small batch. **Stop** halts it; you can continue later.
 
 ## Quarantine

@@ -343,8 +343,8 @@ def test_save_thumb_and_face_crop(tmp_path, monkeypatch):
 
 
 class FakeSigLIP:
-    def __init__(self, prefer_gpu=True):
-        pass
+    def __init__(self, prefer_gpu=True, variant_id="base-256", fit="squash"):
+        self.variant_id, self.fit = variant_id, fit
 
     def prep(self, img):
         return np.asarray(img.resize((8, 8)), np.float32).mean(axis=(0, 1))
@@ -384,6 +384,7 @@ def sandbox(tmp_path, monkeypatch):
     s = config.Settings(library_roots=[str(lib)], quarantine_dir=str(tmp_path / "q"))
     orig = indexer.list_photos
     monkeypatch.setattr(indexer, "list_photos", lambda: orig(s, extra_roots=[]))
+    monkeypatch.setattr(indexer, "selected_model", lambda settings=None: ("base-256", "squash"))
     return lib
 
 
@@ -426,6 +427,141 @@ def test_run_leaves_originals_untouched(sandbox, capsys):
     before = {p: p.read_bytes() for p in sandbox.rglob("*.jpg")}
     run_index(capsys)
     assert {p: p.read_bytes() for p in sandbox.rglob("*.jpg")} == before
+
+
+# ---------- model variants / index identity ----------
+def use_model(monkeypatch, vid, fit="squash"):
+    monkeypatch.setattr(indexer, "selected_model", lambda settings=None: (vid, fit))
+
+
+def test_variants_registry():
+    from photovault.ai import variants
+    assert variants.get("nonsense").id == variants.get(None).id == variants.DEFAULT_ID == "base-256"
+    assert variants.get(["unhashable"]).id == "base-256"
+    assert variants.identity("so400m-384", "pad") == "so400m-384:pad"
+    assert variants.identity("so400m-384", "weird") == "so400m-384:squash"
+    assert variants.parse_identity("base-384:pad") == ("base-384", "pad")
+    assert variants.parse_identity(None) == ("base-256", "squash")
+    dims = {v.id: v.dim for v in variants.VARIANTS.values()}
+    assert dims == {"base-256": 768, "base-384": 768, "so400m-384": 1152}
+    for v in variants.VARIANTS.values():
+        fs = variants.files(v)
+        assert len(fs) == 3 and all(rel.startswith(v.dirname + "/") for _, rel in fs)
+        assert all(url.startswith("https://huggingface.co/onnx-community/" + v.repo + "/") for url, _ in fs)
+    # the default model keeps its original on-disk location and download URLs
+    assert paths.MODELS / variants.get("base-256").dirname == paths.SIGLIP
+    assert variants.files(variants.get("base-256"))[0][0].endswith(
+        "siglip2-base-patch16-256-ONNX/resolve/main/onnx/vision_model.onnx")
+
+
+def test_prep_squash_and_pad():
+    from photovault.ai import preprocess
+    img = Image.new("RGB", (400, 200), (255, 0, 0))
+    sq = preprocess.prep_image(img, 64, "squash")
+    pd = preprocess.prep_image(img, 64, "pad")
+    assert sq.shape == pd.shape == (3, 64, 64) and sq.dtype == np.float32
+    assert np.allclose(sq[0], 1.0) and np.allclose(sq[1], -1.0)           # whole square is the photo
+    assert np.allclose(pd[0, 20:44, :], 1.0) and abs(pd[0, 0, 0]) < 0.02  # photo in the middle, grey bars top/bottom
+    assert abs(pd[1, 63, 5]) < 0.02
+
+
+def test_index_model_fresh_legacy_and_switch(conn):
+    from photovault.ai import variants
+    assert store.index_model(conn) is None
+    assert store.model_choice(conn, ("base-384", "pad")) == ("base-384", "pad")      # empty index: use the setting
+    add_photo(conn, "a", unit(1, 0))                                                 # legacy index, no record
+    assert store.model_choice(conn, ("base-384", "pad")) == ("base-256", "squash")   # ...is the original model
+    assert not store.needs_model_reset(conn, variants.DEFAULT_IDENTITY)
+    assert not store.ensure_index_model(conn, variants.DEFAULT_IDENTITY)
+    assert store.index_model(conn) == "base-256:squash" and store.load_embeddings(conn)[0] == ["a"]
+    assert store.needs_model_reset(conn, "base-384:squash") and store.needs_model_reset(conn, "base-256:pad")
+    assert store.index_model(conn) == "base-256:squash"          # a check alone changes nothing
+
+
+def test_switching_model_drops_only_derived_embeddings(conn):
+    add_photo(conn, "a", unit(1, 0))
+    add_face(conn, "a", unit(1, 0, 0))
+    conn.execute("INSERT INTO seen(path,size,mtime,hash) VALUES ('/x',1,1.0,'a')")
+    store.add_photo_tag(conn, "a", store.get_or_create_tag(conn, "Trip", "event"), "manual")
+    conn.commit()
+    assert store.ensure_index_model(conn, "so400m-384:squash") is True
+    assert conn.execute("SELECT COUNT(*) FROM embedding").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM seen").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM photo").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM face").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM photo_tag WHERE source='manual'").fetchone()[0] == 1
+    assert store.index_model(conn) == "so400m-384:squash"
+    assert store.ensure_index_model(conn, "so400m-384:squash") is False
+
+
+def test_label_vector_cache_is_per_model(conn):
+    from photovault.ai import autotag
+    calls = []
+
+    def enc(texts):
+        calls.append(len(texts))
+        return np.eye(len(texts), 4, dtype=np.float32) + 0.1
+
+    autotag.label_vectors(conn, enc)
+    autotag.label_vectors(conn, None)                       # default model: cached under the original key
+    store.ensure_index_model(conn, "base-384:squash")
+    with pytest.raises(RuntimeError):
+        autotag.label_vectors(conn, None)                   # other model must not reuse the default's vectors
+    autotag.label_vectors(conn, enc)
+    assert len(calls) == 2
+    keys = {r[0] for r in conn.execute("SELECT key FROM meta WHERE key LIKE 'tag_text_vecs%'")}
+    assert len(keys) == 2 and any(k.endswith("base-384:squash") for k in keys)
+
+
+def test_run_model_switch_reembeds_and_keeps_faces(sandbox, capsys, monkeypatch):
+    run_index(capsys)
+    c = store.connect()
+    assert store.index_model(c) == "base-256:squash"
+    faces_before = [tuple(r) for r in c.execute("SELECT id, hash FROM face ORDER BY id")]
+    photos_before = [tuple(r) for r in c.execute("SELECT hash, n_faces FROM photo WHERE status='ok' ORDER BY hash")]
+    c.execute("UPDATE embedding SET vec=?", (store.vec_to_blob(unit(0, 0, 1)),))     # mark old-model vectors
+    c.commit()
+    c.close()
+    use_model(monkeypatch, "base-384", "pad")
+    ev = run_index(capsys)
+    assert any(e["event"] == "model_changed" for e in ev)
+    assert next(e for e in ev if e["event"] == "start")["total"] == 4
+    c = store.connect()
+    assert store.index_model(c) == "base-384:pad"
+    assert store.stats(c)["embedded"] == 2
+    assert not any(np.allclose(store.blob_to_vec(r["vec"]).astype(np.float32), unit(0, 0, 1), atol=1e-2)
+                   for r in c.execute("SELECT vec FROM embedding"))                  # old vectors are gone
+    assert [tuple(r) for r in c.execute("SELECT id, hash FROM face ORDER BY id")] == faces_before
+    assert [tuple(r) for r in c.execute("SELECT hash, n_faces FROM photo WHERE status='ok' ORDER BY hash")] \
+        == photos_before
+    c.close()
+    ev = run_index(capsys)                                                           # same model again: nothing to do
+    assert not any(e["event"] == "model_changed" for e in ev) and ev[-1]["processed"] == 0
+
+
+def test_run_model_switch_with_missing_model_keeps_index(sandbox, capsys, monkeypatch):
+    run_index(capsys)
+
+    class Missing(FakeSigLIP):
+        def __init__(self, prefer_gpu=True, variant_id="base-256", fit="squash"):
+            if variant_id != "base-256":
+                raise FileNotFoundError("model not downloaded")
+            super().__init__(prefer_gpu, variant_id, fit)
+
+    monkeypatch.setattr(sys.modules["photovault.ai.models"], "SigLIP", Missing)
+    use_model(monkeypatch, "so400m-384")
+    with pytest.raises(FileNotFoundError):
+        run_index(capsys)
+    c = store.connect()
+    assert store.index_model(c) == "base-256:squash" and store.stats(c)["embedded"] == 2
+    assert c.execute("SELECT COUNT(*) FROM seen").fetchone()[0] == 4
+    c.close()
+
+
+def test_selected_model_from_settings():
+    assert indexer.selected_model(config.Settings()) == ("base-256", "squash")
+    assert indexer.selected_model(config.Settings(ai_model="so400m-384", ai_fit="pad")) == ("so400m-384", "pad")
+    assert indexer.selected_model(config.Settings(ai_model="bogus", ai_fit="bogus")) == ("base-256", "squash")
 
 
 # ---------- worker CLI / client ----------
@@ -554,6 +690,19 @@ def test_ai_setup_full_run_and_available(tmp_path, monkeypatch):
     assert calls[0][:2] == ["py", "-3.13"] and "pip" in calls[1]
     assert setup_env.models_ready() and not paths.SETUP_MARKER.exists()
     assert AiClient().available and events[-1][0] == "done"
+
+
+def test_setup_downloads_the_selected_model(tmp_path, monkeypatch):
+    setup_env = _setup_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(config.Settings, "load", classmethod(lambda cls: cls(ai_model="base-384")))
+    rels = [rel for _, rel in setup_env.model_files()]
+    assert "siglip2-base-384/onnx/vision_model.onnx" in rels and "faces/det_10g.onnx" in rels
+    assert not any(r.startswith("siglip2/") for r in rels)
+    assert not setup_env.models_ready()
+    for rel in rels:
+        (paths.MODELS / rel).parent.mkdir(parents=True, exist_ok=True)
+        (paths.MODELS / rel).write_text("x")
+    assert setup_env.models_ready()
 
 
 def test_ai_setup_not_available_while_interrupted(tmp_path, monkeypatch):

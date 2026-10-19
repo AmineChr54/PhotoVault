@@ -116,6 +116,10 @@ class Settings:
     backup_reminder_days: int = 30
     theme: str = "dark"
     ui_zoom: float = 1.0
+    # AI embedding model: "base-256" (default), "base-384" or "so400m-384"; ai_fit "squash" (default) or "pad"
+    # (keep aspect ratio). Changing either means the AI index is rebuilt on the next "Index new photos".
+    ai_model: str = "base-256"
+    ai_fit: str = "squash"
     folder_rules: list = field(default_factory=lambda: [list(r) for r in DEFAULT_RULES])
 
     @property

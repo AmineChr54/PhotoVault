@@ -13,7 +13,7 @@ import xxhash
 from PIL import Image, ImageOps
 
 from ..core import config
-from . import autotag, paths, store
+from . import autotag, paths, store, variants
 
 DECODE_MAX = 1600
 MIN_FACE = 28  # px on the decoded image; smaller faces are unreliable
@@ -147,9 +147,23 @@ def save_face_crop(img, box, face_id):
     c.save(paths.FACE_CROPS / f"{face_id}.jpg", "JPEG", quality=88)
 
 
+def selected_model(settings=None) -> tuple:
+    """(variant_id, fit) chosen in settings; unknown values mean the default model."""
+    settings = settings or config.Settings.load()
+    return variants.get(settings.ai_model).id, variants.clean_fit(settings.ai_fit)
+
+
 def run(limit=None, use_faces=True, prefer_gpu=True, cancel=None, workers=4, sample_every=None):
     from .models import Faces, SigLIP
     conn = store.connect()
+    vid, fit = selected_model()
+    ident = variants.identity(vid, fit)
+    sig = None
+    if store.needs_model_reset(conn, ident):
+        # Load the new model first: if its files are missing this raises before the existing index is touched.
+        sig = SigLIP(prefer_gpu, vid, fit)
+        emit(event="model_changed", model=ident, message="AI model changed: re-embedding all photos")
+    store.ensure_index_model(conn, ident)
     t0 = time.time()
     emit(event="listing")
     items = list_photos()
@@ -164,7 +178,7 @@ def run(limit=None, use_faces=True, prefer_gpu=True, cancel=None, workers=4, sam
     if not total:
         emit(event="done", processed=0, seconds=0)
         return
-    sig = SigLIP(prefer_gpu)
+    sig = sig or SigLIP(prefer_gpu, vid, fit)
     faces = Faces(prefer_gpu) if use_faces else None
     n = nfaces = 0
     t_inf = 0.0
@@ -193,8 +207,8 @@ def run(limit=None, use_faces=True, prefer_gpu=True, cancel=None, workers=4, sam
             x = np.stack([sig.prep(b["img"]) for b in ok])
             emb = sig.encode_images(x)
             for b, e in zip(ok, emb):
-                nf = 0
-                if faces:
+                nf = conn.execute("SELECT COUNT(*) FROM face WHERE hash=?", (b["hash"],)).fetchone()[0]
+                if faces and not nf:   # faces already stored (re-embedding after a model change): keep them
                     rgb = np.asarray(b["img"])
                     for box, score, kps in faces.detect(rgb):
                         if min(box[2] - box[0], box[3] - box[1]) < MIN_FACE:

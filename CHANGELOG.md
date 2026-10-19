@@ -4,6 +4,7 @@ All notable changes. Format: Added / Changed / Fixed. Versions follow semver; ta
 
 ## Unreleased
 ### Added
+- AI (#9): optional larger SigLIP 2 models and aspect-ratio-preserving input. Set `ai_model` in settings.json to `base-256` (default, unchanged), `base-384` or `so400m-384`, and `ai_fit` to `squash` (default) or `pad` (keeps the photo's proportions instead of stretching it to a square), then click "Enable AI features" to download the model and re-run "Index new photos". Switching models re-embeds the whole library (only derived search data is replaced; faces, people, manual tags and your photos are untouched); search and auto tags keep using the model the index was built with until then. Not benchmarked yet, so the default is unchanged.
 - In-app Help page (#28): the user guide and a What's new section render inside the app (sidebar > Help, or F1 anywhere). New About dialog (sidebar footer or Help page) with version, GitHub link, privacy note and AI model credits (including InsightFace's non-commercial licence). The first-run notice links to Help. The guide and changelog are bundled into the exe.
 
 ### Changed
