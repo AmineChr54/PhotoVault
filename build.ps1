@@ -15,8 +15,13 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 $exe = Join-Path $PSScriptRoot "dist\PhotoVault\PhotoVault.exe"
 if ($InstallDir) {
     if (Get-Process PhotoVault -ErrorAction SilentlyContinue) { throw "Close Photo Vault first." }
+    # Only ever replace a plain app folder (PhotoVault.exe + _internal): never a folder that holds anything else.
+    if (Test-Path $InstallDir) {
+        $extra = Get-ChildItem $InstallDir -Force | Where-Object { $_.Name -notin 'PhotoVault.exe', '_internal' }
+        if ($extra -or -not (Test-Path (Join-Path $InstallDir "PhotoVault.exe"))) { throw "$InstallDir is not a plain Photo Vault install folder; refusing to replace it." }
+    }
     $old = "$InstallDir.old"
-    if (Test-Path $old) { Remove-Item $old -Recurse -Force }
+    if (Test-Path $old) { Move-Item $old "$old.$(Get-Date -Format yyyyMMddHHmmss)" }
     if (Test-Path $InstallDir) { Move-Item $InstallDir $old }
     New-Item -ItemType Directory (Split-Path $InstallDir) -Force | Out-Null
     Copy-Item (Join-Path $PSScriptRoot "dist\PhotoVault") $InstallDir -Recurse

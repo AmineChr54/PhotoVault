@@ -39,7 +39,7 @@ def test_is_newer():
 
 def release_json(tag="v0.2.0", assets=("PhotoVault-v0.2.0-win64.zip", "PhotoVault-v0.2.0-win64.zip.sha256")):
     return json.dumps({"tag_name": tag, "body": "notes", "html_url": "http://x",
-                       "assets": [{"name": n, "browser_download_url": "http://dl/" + n} for n in assets]}).encode()
+                       "assets": [{"name": n, "browser_download_url": "https://github.com/dl/" + n} for n in assets]}).encode()
 
 
 def test_latest_release_parses_and_fails_silently():
@@ -56,7 +56,7 @@ def test_latest_release_parses_and_fails_silently():
 
 
 def make_release(tmp_path, zip_bytes, sha):
-    rel = updater.Release("v0.2.0", "", "", "http://dl/p.zip", "p.zip", "http://dl/p.zip.sha256")
+    rel = updater.Release("v0.2.0", "", "", "https://github.com/dl/p.zip", "p.zip", "https://github.com/dl/p.zip.sha256")
 
     def opener(url):
         return FakeResp((sha + "  p.zip\n").encode() if url.endswith(".sha256") else zip_bytes)
@@ -107,9 +107,7 @@ def test_extract_finds_exe_folder_and_requires_exe(tmp_path):
 
 
 def test_apply_update_stages_beside_install_and_spawns_helper(tmp_path):
-    inst = tmp_path / "Programs" / "PhotoVault"
-    inst.mkdir(parents=True)
-    (inst / "PhotoVault.exe").write_bytes(b"old")
+    inst = make_install(tmp_path / "Programs" / "PhotoVault")
     photo = tmp_path / "Pictures" / "a.jpg"
     photo.parent.mkdir()
     photo.write_bytes(b"photo")
@@ -130,3 +128,74 @@ def test_apply_update_refuses_non_install(tmp_path):
     with pytest.raises(RuntimeError, match="installed"):
         updater.apply_update(str(z), str(tmp_path / "nothing"), spawn=lambda *a, **k: None)
     assert not (tmp_path / "nothing.update").exists()
+
+
+def test_release_urls_must_be_https_github():
+    bad = json.dumps({"tag_name": "v0.2.0", "assets": [
+        {"name": "p-win64.zip", "browser_download_url": "https://evil.example/p-win64.zip"},
+        {"name": "p-win64.zip.sha256", "browser_download_url": "https://evil.example/p-win64.zip.sha256"}]}).encode()
+    assert updater.latest_release(lambda url: FakeResp(bad)) is None
+    assert not updater.trusted_url("http://github.com/x") and updater.trusted_url("https://objects.githubusercontent.com/x")
+    assert not updater.trusted_url("https://github.com.evil.example/x")
+
+
+def test_sha_file_must_name_the_zip(tmp_path):
+    data = b"zipdata"
+    rel = updater.Release("v0.2.0", "", "", "https://github.com/p.zip", "p.zip", "https://github.com/p.zip.sha256")
+    h = hashlib.sha256(data).hexdigest()
+    opener = lambda url: FakeResp((h + "  other.zip\n").encode() if url.endswith(".sha256") else data)  # noqa: E731
+    with pytest.raises(RuntimeError, match="SHA-256 entry"):
+        updater.download_and_verify(rel, str(tmp_path / "dl"), opener=opener)
+
+
+def test_zip_name_cannot_escape_dest(tmp_path):
+    data = b"zipdata"
+    h = hashlib.sha256(data).hexdigest()
+    rel = updater.Release("v0.2.0", "", "", "https://github.com/p.zip", "../../p.zip", "https://github.com/p.sha256")
+    opener = lambda url: FakeResp((h + "  p.zip\n").encode() if url.endswith(".sha256") else data)  # noqa: E731
+    dest = tmp_path / "a" / "dl"
+    p = updater.download_and_verify(rel, str(dest), opener=opener)
+    assert (tmp_path / "a" / "dl" / "p.zip").exists() and p.startswith(str(dest.resolve()))
+
+
+def make_install(path, extra=()):
+    path.mkdir(parents=True)
+    (path / "PhotoVault.exe").write_bytes(b"old")
+    (path / "_internal").mkdir()
+    for n in extra:
+        (path / n).write_bytes(b"x")
+    return path
+
+
+def test_install_guard_refuses_folders_with_foreign_files(tmp_path):
+    photo_dir = make_install(tmp_path / "Photos", extra=["holiday.jpg"])
+    with pytest.raises(RuntimeError, match="not part of the app"):
+        updater.check_install_safe(str(photo_dir))
+    ok = make_install(tmp_path / "Programs" / "PhotoVault")
+    updater.check_install_safe(str(ok))  # plain app folder passes
+
+
+def test_install_guard_refuses_overlap_with_user_data(tmp_path):
+    inst = make_install(tmp_path / "PhotoVault")
+    for data in (tmp_path / "PhotoVault" / "data", tmp_path, str(inst)):
+        with pytest.raises(RuntimeError, match="overlaps"):
+            updater.check_install_safe(str(inst), [str(data)])
+    updater.check_install_safe(str(inst), [str(tmp_path / "Pictures")])
+
+
+def test_prepare_rechecks_zip_hash(tmp_path):
+    inst = make_install(tmp_path / "PhotoVault")
+    z = tmp_path / "new.zip"
+    make_zip(z, {"PhotoVault/PhotoVault.exe": b"new"})
+    with pytest.raises(RuntimeError, match="changed after verification"):
+        updater.prepare(str(z), str(inst), sha="0" * 64)
+    assert not (tmp_path / "PhotoVault.update").exists()
+    new = updater.prepare(str(z), str(inst), sha=updater.sha256_of(str(z)))
+    assert new.endswith("PhotoVault")
+
+
+def test_extract_requires_exactly_one_exe(tmp_path):
+    z = tmp_path / "two.zip"
+    make_zip(z, {"a/PhotoVault.exe": b"x", "b/PhotoVault.exe": b"y"})
+    with pytest.raises(RuntimeError, match="exactly one"):
+        updater.extract_staging(str(z), str(tmp_path / "s"))

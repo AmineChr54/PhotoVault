@@ -1,6 +1,8 @@
 """Photo Vault - main window."""
 import os
+import shutil
 import sys
+import tempfile
 import threading
 import time
 
@@ -212,14 +214,12 @@ class MainWindow(QMainWindow):
         if not force and (not s.check_updates or time.time() - s.last_update_check < 86400):
             return
 
-        def work():
-            rel = updater.check(__version__)
-            s.last_update_check = time.time()
-            s.save()
-            self.updateFound.emit(rel)
-        threading.Thread(target=work, daemon=True).start()
+        threading.Thread(target=lambda: self.updateFound.emit(updater.check(__version__)), daemon=True).start()
 
     def _show_update(self, rel):
+        s = self.ctx.settings  # runs on the UI thread, so settings are only ever saved from there
+        s.last_update_check = time.time()
+        s.save()
         self.release = rel
         if rel:
             self.update_btn.setText(f"Update to {rel.tag} available")
@@ -245,17 +245,38 @@ class MainWindow(QMainWindow):
             import webbrowser
             webbrowser.open(rel.page)  # running from source: nothing to swap
             return
-        tmp = os.path.join(os.environ.get("TEMP", "."), "PhotoVault-update")
-        self.ctx.tasks.run("Downloading update",
-                           lambda c, prog, cancel: updater.download_and_verify(
-                               rel, tmp, lambda d, t: prog(d, t, "Downloading update"), cancel),
-                           self._apply_update, on_fail=lambda e: QMessageBox.warning(self, "Update failed", str(e)),
+        self.update_btn.setEnabled(False)
+        inst, protected = updater.install_dir(), self._protected_folders()
+
+        def work(c, prog, cancel):
+            tmp = tempfile.mkdtemp(prefix="photovault_update_")
+            try:
+                zip_path = updater.download_and_verify(rel, tmp, lambda d, t: prog(d, t, "Downloading update"), cancel)
+                prog(0, 0, "Preparing update")
+                return updater.prepare(zip_path, inst, protected, rel.sha)
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+
+        def failed(msg):
+            self.update_btn.setEnabled(True)
+            if msg != "Cancelled":
+                QMessageBox.warning(self, "Update failed", str(msg))
+
+        self.ctx.tasks.run("Downloading update", work, lambda new: self._apply_update(new, inst), on_fail=failed,
                            parent=self)
 
-    def _apply_update(self, zip_path):
+    def _protected_folders(self):
+        """Every folder holding user data; the updater refuses to replace an install folder that overlaps one."""
+        from .ai import paths as ai_paths
+        s = self.ctx.settings
+        return [str(config.APP_DIR), str(ai_paths.DATA), *s.library_roots, s.organized_root, s.quarantine_dir,
+                *s.backup_sources, s.backup_target]
+
+    def _apply_update(self, new, inst):
         try:
-            updater.apply_update(zip_path)
+            updater.launch_swap(new, inst)
         except Exception as e:
+            self.update_btn.setEnabled(True)
             QMessageBox.warning(self, "Update failed", str(e))
             return
         QApplication.quit()
